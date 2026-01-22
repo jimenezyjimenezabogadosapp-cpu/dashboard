@@ -1,16 +1,16 @@
 "use client";
 
-import { ReactNode } from "react";
+import { ReactNode, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import DashboardNav from "@/components/DashboardNav";
 import ReporteriaSegmentadaClient from "@/components/ReporteriaSegmentadaClient";
 
-export default function DashboardLayout({
+function DashboardLayoutContent({
     children,
-}: Readonly<{
+}: {
     children: ReactNode;
-}>) {
+}) {
     const searchParams = useSearchParams();
     const roleId = searchParams.get('role_id');
 
@@ -60,4 +60,22 @@ export default function DashboardLayout({
 
     // Para otros roles o sin rol, mostrar solo la reportería segmentada con filtro
     return <ReporteriaSegmentadaClient />;
+}
+
+export default function DashboardLayout({
+    children,
+}: Readonly<{
+    children: ReactNode;
+}>) {
+    return (
+        <Suspense fallback={
+            <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
+                <div className="text-gray-500 dark:text-gray-400 animate-pulse">Cargando dashboard...</div>
+            </div>
+        }>
+            <DashboardLayoutContent>
+                {children}
+            </DashboardLayoutContent>
+        </Suspense>
+    );
 }
