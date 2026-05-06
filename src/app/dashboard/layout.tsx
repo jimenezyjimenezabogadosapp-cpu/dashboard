@@ -9,23 +9,16 @@ function DashboardLayoutContent({
 }: {
     children: ReactNode;
 }) {
-    const searchParams = useSearchParams();
-    const roleId = searchParams.get('role_id');
-
-    // Si el rol es SUPER, mostrar ambas pestañas
-    if (roleId === 'SUPER') {
-        return (
-            <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-                {/* Contenido */}
-                <main className="max-w-full px-4 py-8">
-                    {children}
-                </main>
-            </div>
-        );
-    }
-
-    // Para otros roles o sin rol, mostrar solo la reportería segmentada con filtro
-    return <ReporteriaSegmentadaClient />;
+    // Renderizamos los children siempre para permitir el acceso a todas las subrutas (como parametrización)
+    // Las restricciones de rol se manejarán dentro de cada componente específico
+    return (
+        <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+            {/* Contenido */}
+            <main className="max-w-full px-4 py-8">
+                {children}
+            </main>
+        </div>
+    );
 }
 
 export default function DashboardLayout({
