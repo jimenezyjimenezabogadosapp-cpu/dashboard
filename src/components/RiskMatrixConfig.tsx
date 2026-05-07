@@ -31,94 +31,212 @@ import {
 interface Mitigation {
     id: string;
     controlType: string;
+    nature: "Preventivo" | "Detectivo";
     customControlName: string;
     description: string;
     efficacy: number; // 0 to 1
     responsible: string;
+    evaluation: string; // "SÍ SE ESTÁN APLICANDO Y SON ADECUADOS" | "NO SE ESTÁN APLICANDO" | "SE APLICAN PARCIALMENTE"
+}
+
+interface PHVAFase {
+    descripcion: string;
+    responsable: string;
+    fecha: string;
+    seguimiento: string;
+    estado: "Abierta" | "Cerrada";
+    eficacia: "Sí" | "No" | "En evaluación";
+}
+
+interface PHVA {
+    planear: PHVAFase;
+    hacer: PHVAFase;
+    verificar: PHVAFase;
+    actuar: PHVAFase;
 }
 
 interface RiskConfig {
     id: string;
+    dependenceId: string;
     catalogRisk: string;
     customRiskName: string;
     riskType: string;
     description: string;
     comment: string;
-    probability: number;
-    impact: number;
-    justification: string;
+    probability: number; // 1 to 4
+    impact: number; // 5, 10, 20
+    context: string[]; // Factores de riesgo
+    associatedImpacts: string[]; // Contagio, Legal, Reputacional, Operativo
+    treatment: string; // Opciones de manejo
     mitigations: Mitigation[];
+    residualProbability: number;
+    residualImpact: number;
+    requiresImprovement: boolean;
+    phva?: PHVA;
 }
 
-const RISK_TYPES = [
+// --- CATALOGO UNIVERSAL (POR DEFECTO) ---
+const DEFAULT_RISK_TYPES = [
     "LA/FT (Lavado de Activos / Financiación del Terrorismo)",
     "FPADM (Financiación de la Proliferación de Armas de Destrucción Masiva)",
     "Corrupción",
     "Soborno Transnacional",
     "Fraude Interno",
-    "Operacional"
+    "Operacional",
+    "PTEE — Programa de Transparencia y Ética Empresarial"
 ];
 
-const CONTROL_TYPES = [
-    { name: "Verificación Automática en Listas Restrictivas", efficacy: 1.0 },
-    { name: "Monitoreo Transaccional Automatizado", efficacy: 0.8 },
-    { name: "Debida Diligencia Intensificada (Manual)", efficacy: 0.5 },
-    { name: "Reporte de Operaciones Sospechosas (ROS)", efficacy: 0.8 },
-    { name: "Capacitación y Concienciación Periódica", efficacy: 0.2 },
-    { name: "Conciliación de Saldos Mensual", efficacy: 0.5 },
-    { name: "Auditoría Interna de Procesos", efficacy: 0.5 },
-    { name: "OTRO (PERSONALIZADO)", efficacy: 0.5 }
-];
-
-const CATALOG_BY_TYPE: Record<string, string[]> = {
+const DEFAULT_CATALOG: Record<string, string[]> = {
     "LA/FT (Lavado de Activos / Financiación del Terrorismo)": [
-        "Apertura de productos con documentación falsa",
-        "Fraccionamiento de transacciones (Pitufeo)",
-        "Uso de cuentas de terceros (Testaferrato)",
-        "Inyección de capital de origen ilícito",
-        "Uso de empresas fachada"
-    ],
-    "FPADM (Financiación de la Proliferación de Armas de Destrucción Masiva)": [
-        "Triangulación de recursos para compra de materiales duales",
-        "Transferencias a países con sanciones internacionales",
-        "Uso de intermediarios en paraísos fiscales"
+        "Ingreso de recursos de origen ilícito mediante transacciones comerciales",
+        "Uso de la entidad para el ocultamiento de bienes provenientes de actividades delictivas",
+        "Vinculación de clientes o proveedores sin verificación en listas restrictivas",
+        "PERSONALIZADO"
     ],
     "Corrupción": [
-        "Pagos de facilitación a funcionarios públicos",
-        "Sobornos para la adjudicación de contratos",
-        "Tráfico de influencias en la cadena de suministro"
+        "Ofrecimiento o recepción de sobornos para favorecer contratos",
+        "Apropiación indebida de recursos de la entidad",
+        "Tráfico de influencias en la toma de decisiones",
+        "PERSONALIZADO"
+    ]
+};
+
+// --- CATALOGO EXCLUSIVO UNIVERSIDAD SERGIO ARBOLEDA ---
+const SERGIO_ARBOLEDA_RISK_TYPES = [
+    "LA/FT (Lavado de Activos / Financiación del Terrorismo)",
+    "FPADM (Financiación de la Proliferación de Armas de Destrucción Masiva)",
+    "Corrupción",
+    "Soborno Transnacional",
+    "Fraude Interno",
+    "Operacional",
+    "PTEE — Corrupción y Soborno (Programa de Transparencia y Ética Empresarial)",
+    "PTEE — Conflicto de Interés",
+    "PTEE — Beneficios Indebidos / Donaciones Condicionadas",
+    "PTEE — Uso de Intermediarios / Soborno Transnacional",
+    "PTEE — Prácticas Anticompetitivas / Colusión",
+    "PTEE — Conducta No Ética de Directivos y Colaboradores"
+];
+
+const SERGIO_ARBOLEDA_CATALOG: Record<string, string[]> = {
+    "LA/FT (Lavado de Activos / Financiación del Terrorismo)": [
+        "Apertura de productos o servicios con documentación incompleta de debida diligencia",
+        "Prestación de servicios o contratos sin debida diligencia previa (realizada de forma posterior)",
+        "Convenios de formación con personas jurídicas vinculadas a LA/FT mediante pago de matrículas con recursos ilícitos",
+        "Arrendamiento de instalaciones (auditorios, salones, laboratorios) a clientes vinculados a listas restrictivas",
+        "Alianzas estratégicas con empresas fachada utilizadas para canalizar recursos ilícitos",
+        "Influencia indebida de directivos para favorecer contrataciones sin transparencia ni controles",
+        "Otorgamiento o recepción de préstamos de terceros con condiciones contractuales atípicas y recursos de origen ilícito",
+        "Directivos con antecedentes judiciales, disciplinarios o incluidos en listas restrictivas",
+        "No revelación de relaciones económicas, societarias o familiares por parte de directivos (beneficiarios finales ocultos)",
+        "Recepción de beneficios económicos o en especie por directivos asociados a decisiones institucionales",
+        "Conductas de alto riesgo de directivos fuera del ejercicio del cargo que comprometan la reputación institucional",
+        "PERSONALIZADO"
     ],
-    "Soborno Transnacional": [
-        "Pagos indebidos a funcionarios extranjeros",
-        "Uso de agentes externos para ocultar dádivas",
-        "Financiación irregular de campañas en el exterior"
+    "PTEE — Corrupción y Soborno (Programa de Transparencia y Ética Empresarial)": [
+        "Omisión de debida diligencia sobre contrapartes en procesos de contratación, convenios o licitaciones",
+        "Pago de comisiones, regalos o beneficios indebidos para influir en decisiones institucionales (soborno/cohecho)",
+        "No declaración o gestión inadecuada de conflictos de interés por directivos, docentes o funcionarios",
+        "Recepción de donaciones, patrocinios o aportes condicionados a decisiones institucionales sin controles de transparencia",
+        "Uso de intermediarios, consultores o aliados estratégicos para acceder a contratos con comisiones ocultas",
+        "Participación en procesos de contratación pública o privada con prácticas anticompetitivas, colusión o tráfico de influencias",
+        "Conductas no éticas de directivos, docentes o funcionarios que generen impacto reputacional grave",
+        "PERSONALIZADO"
     ],
     "Fraude Interno": [
-        "Malversación de fondos por empleados",
-        "Manipulación de estados financieros",
-        "Robo de información confidencial o activos"
+        "Manipulación de registros académicos o notas por beneficios personales",
+        "Desvío de recursos destinados a investigación o becas",
+        "Uso indebido de activos de la universidad para fines privados",
+        "PERSONALIZADO"
     ],
     "Operacional": [
-        "Fallas en los sistemas de monitoreo",
-        "Errores humanos en la debida diligencia",
-        "Incumplimiento de políticas internas"
+        "Fallas en los sistemas de información que comprometan la integridad de los datos",
+        "Interrupción de servicios educativos por fallas en la infraestructura técnica",
+        "PERSONALIZADO"
     ]
 };
 
 const RISK_SUGGESTIONS: Record<string, { p: number, i: number }> = {
-    "Apertura de productos con documentación falsa": { p: 4, i: 5 },
-    "Fraccionamiento de transacciones (Pitufeo)": { p: 5, i: 3 },
-    "Uso de cuentas de terceros (Testaferrato)": { p: 3, i: 5 },
-    "Inyección de capital de origen ilícito": { p: 2, i: 5 },
-    "Pagos de facilitación a funcionarios públicos": { p: 4, i: 4 },
-    "Fallas en los sistemas de monitoreo": { p: 3, i: 3 }
+    "Apertura de productos": { p: 3, i: 10 },
+    "Prestación de servicios": { p: 4, i: 20 },
+    "Convenios de formación": { p: 2, i: 20 },
+    "Arrendamiento de instalaciones": { p: 2, i: 20 },
+    "Alianzas estratégicas": { p: 1, i: 20 },
+    "Omisión de debida diligencia": { p: 3, i: 10 },
+    "Pago de comisiones": { p: 4, i: 20 },
+    "No declaración": { p: 3, i: 20 },
+    "donaciones, patrocinios": { p: 2, i: 20 },
+    "intermediarios, consultores": { p: 3, i: 20 },
+    "prácticas anticompetitivas": { p: 1, i: 20 },
+    "Manipulación de registros": { p: 3, i: 20 },
+    "Desvío de recursos": { p: 2, i: 20 },
+    "Uso indebido de activos": { p: 3, i: 10 },
+    "Fallas en los sistemas": { p: 2, i: 10 }
 };
+
+const CONTROL_TYPES = [
+    { name: "Verificación Automática en Listas Restrictivas", efficacy: 0.85, nature: "Preventivo" as const },
+    { name: "Monitoreo Transaccional Automatizado", efficacy: 0.85, nature: "Detectivo" as const },
+    { name: "Debida Diligencia Intensificada (Manual)", efficacy: 0.65, nature: "Preventivo" as const },
+    { name: "Debida Diligencia Reforzada a Directivos", efficacy: 0.85, nature: "Preventivo" as const },
+    { name: "Reporte de Operaciones Sospechosas — ROS a la UIAF", efficacy: 0.80, nature: "Detectivo" as const },
+    { name: "Capacitación y Concienciación Periódica (SARLAFT/PTEE)", efficacy: 0.40, nature: "Preventivo" as const },
+    { name: "Conciliación de Saldos Mensual", efficacy: 0.55, nature: "Detectivo" as const },
+    { name: "Auditoría Interna de Procesos", efficacy: 0.70, nature: "Detectivo" as const },
+    { name: "Política de No Servicio sin SARLAFT Aprobado", efficacy: 0.85, nature: "Preventivo" as const },
+    { name: "Verificación de Beneficiario Final", efficacy: 0.85, nature: "Preventivo" as const },
+    { name: "Cláusulas SARLAFT y de Terminación Automática en Contratos", efficacy: 0.75, nature: "Preventivo" as const },
+    { name: "Formato de Declaración de Conflicto de Interés", efficacy: 0.70, nature: "Preventivo" as const },
+    { name: "Canal de Denuncias Confidencial y Anónimo", efficacy: 0.80, nature: "Detectivo" as const },
+    { name: "Comité de Aprobación Financiera / Cumplimiento", efficacy: 0.75, nature: "Preventivo" as const },
+    { name: "Segregación de Funciones", efficacy: 0.80, nature: "Preventivo" as const },
+    { name: "Programa Anual de Capacitación PTEE Obligatoria", efficacy: 0.50, nature: "Preventivo" as const },
+    { name: "Cruce Trimestral en Aplicativo de Directivos", efficacy: 0.85, nature: "Detectivo" as const },
+    { name: "OTRO (PERSONALIZADO)", efficacy: 0.5, nature: "Preventivo" as const }
+];
+
+const CONTEXT_FACTORS = ["Colaboradores", "Proveedores", "Directivos", "Contrapartes", "Clientes", "Aliados Estratégicos", "Administración Sistema", "Todas las áreas"];
+
+const ASSOCIATED_IMPACTS = ["Contagio", "Legal", "Reputacional", "Operativo"];
+
+const TREATMENT_OPTIONS = [
+    "Asumir el Riesgo",
+    "Reducir el Riesgo",
+    "Evitar el Riesgo",
+    "Compartir o Transferir el Riesgo",
+    "Evitar el Riesgo / Reducir el Riesgo / Compartir o Transferir",
+    "Asumir / Reducir el Riesgo / Compartir o Transferir"
+];
+
+const RESPONSIBLE_AREAS = [
+    "Área de Cumplimiento / Oficial de Cumplimiento",
+    "Consejo Directivo",
+    "Área Financiera / Contabilidad",
+    "Todas las áreas",
+    "Área Jurídica",
+    "Rectoría",
+    "Vicerrectoría Administrativa",
+    "Área de Contratación",
+    "Auditoría Interna"
+];
+
+const PROBABILITY_SCALE = [
+    { value: 1, label: "Baja" },
+    { value: 2, label: "Media" },
+    { value: 3, label: "Alta" },
+    { value: 4, label: "Muy Alta" }
+];
+
+const IMPACT_SCALE = [
+    { value: 5, label: "Leve" },
+    { value: 10, label: "Moderado" },
+    { value: 20, label: "Catastrófico" }
+];
 
 const EFFICACY_LABELS = [
     { value: 0.2, label: "Baja", color: "bg-red-500" },
     { value: 0.5, label: "Media", color: "bg-yellow-500" },
-    { value: 0.8, label: "Alta", color: "bg-green-500" },
-    { value: 1.0, label: "Total", color: "bg-blue-500" }
+    { value: 0.75, label: "Alta", color: "bg-green-500" },
+    { value: 0.85, label: "Óptima", color: "bg-blue-500" }
 ];
 
 export default function RiskMatrixConfig() {
@@ -138,29 +256,56 @@ export default function RiskMatrixConfig() {
     const [risksList, setRisksList] = useState<any[]>([]);
     const [searchTerm, setSearchTerm] = useState("");
 
-    const [config, setConfig] = useState<RiskConfig & { dependenceId: string }>({
+    const [config, setConfig] = useState<RiskConfig>({
         id: "",
         dependenceId: "",
         catalogRisk: "",
         customRiskName: "",
-        riskType: RISK_TYPES[0],
+        riskType: DEFAULT_RISK_TYPES[0],
         description: "",
         comment: "",
-        probability: 3,
-        impact: 3,
-        justification: "",
+        probability: 2,
+        impact: 10,
+        context: [],
+        associatedImpacts: [],
+        treatment: TREATMENT_OPTIONS[1],
         mitigations: [{ 
             id: "1", 
             controlType: CONTROL_TYPES[0].name, 
+            nature: CONTROL_TYPES[0].nature,
             customControlName: "",
             description: "", 
             efficacy: CONTROL_TYPES[0].efficacy, 
-            responsible: "" 
-        }]
+            responsible: "",
+            evaluation: "SÍ SE ESTÁN APLICANDO Y SON ADECUADOS"
+        }],
+        residualProbability: 2,
+        residualImpact: 10,
+        requiresImprovement: false
     });
 
     const isFirstRender = useRef(true);
     const userKey = searchParams.get("x-user-key") || "019bdbff-d27c-7583-b76f-80edd5ae064e";
+
+    const activeRiskTypes = useRef<string[]>(DEFAULT_RISK_TYPES);
+    const activeCatalog = useRef<Record<string, string[]>>(DEFAULT_CATALOG);
+
+    const isSergioArboleda = dependencies.find(d => d.id === config.dependenceId)?.name?.toUpperCase().includes("SERGIO ARBOLEDA");
+
+    if (isSergioArboleda) {
+        activeRiskTypes.current = SERGIO_ARBOLEDA_RISK_TYPES;
+        activeCatalog.current = SERGIO_ARBOLEDA_CATALOG;
+    } else {
+        activeRiskTypes.current = DEFAULT_RISK_TYPES;
+        activeCatalog.current = DEFAULT_CATALOG;
+    }
+
+    // Auto-reset riskType if it's not available in the new active list
+    useEffect(() => {
+        if (!activeRiskTypes.current.includes(config.riskType)) {
+            setConfig(prev => ({ ...prev, riskType: activeRiskTypes.current[0] }));
+        }
+    }, [config.dependenceId, dependencies]);
 
     const loadRisks = async (depId: string, isSuper: boolean) => {
         try {
@@ -203,20 +348,27 @@ export default function RiskMatrixConfig() {
     }, [searchParams]);
 
     useEffect(() => {
+        if (isFirstRender.current) {
+            isFirstRender.current = false;
+            return;
+        }
         if (isEditing) return;
-        const options = CATALOG_BY_TYPE[config.riskType] || [];
+        const options = activeCatalog.current[config.riskType] || [];
         setConfig(prev => ({
             ...prev,
             catalogRisk: options[0] || "PERSONALIZADO",
             customRiskName: ""
         }));
-    }, [config.riskType, isEditing]);
+    }, [config.riskType, isEditing, config.dependenceId]);
 
     useEffect(() => {
         if (isEditing) return;
         if (config.catalogRisk === "PERSONALIZADO") return;
         
-        const suggestion = RISK_SUGGESTIONS[config.catalogRisk];
+        // Find suggestion using partial match (first key found that is part of the catalog name)
+        const suggestionKey = Object.keys(RISK_SUGGESTIONS).find(key => config.catalogRisk.includes(key));
+        const suggestion = suggestionKey ? RISK_SUGGESTIONS[suggestionKey] : null;
+
         if (suggestion) {
             setIsAutoCalculating(true);
             setConfig(prev => ({
@@ -224,6 +376,7 @@ export default function RiskMatrixConfig() {
                 probability: suggestion.p,
                 impact: suggestion.i
             }));
+            // Show auto-calc animation then allow manual override
             setTimeout(() => setIsAutoCalculating(false), 800);
         }
     }, [config.catalogRisk, isEditing]);
@@ -236,10 +389,12 @@ export default function RiskMatrixConfig() {
                 { 
                     id: Math.random().toString(36).substr(2, 9), 
                     controlType: CONTROL_TYPES[0].name, 
+                    nature: CONTROL_TYPES[0].nature,
                     customControlName: "",
                     description: "", 
                     efficacy: CONTROL_TYPES[0].efficacy, 
-                    responsible: "" 
+                    responsible: "",
+                    evaluation: "SÍ SE ESTÁN APLICANDO Y SON ADECUADOS"
                 }
             ]
         }));
@@ -252,16 +407,40 @@ export default function RiskMatrixConfig() {
         }));
     };
 
+    const handleAssociatedImpactChange = (impact: string) => {
+        setConfig(prev => {
+            const newImpacts = prev.associatedImpacts.includes(impact)
+                ? prev.associatedImpacts.filter(i => i !== impact)
+                : [...prev.associatedImpacts, impact];
+            
+            // Business Rule: Auto-suggest ROS for Legal or Reputational
+            if ((impact === "Legal" || impact === "Reputacional") && !prev.mitigations.some(m => m.controlType.includes("ROS"))) {
+                // We don't automatically add, but we could highlight or suggest
+            }
+            
+            return { ...prev, associatedImpacts: newImpacts };
+        });
+    };
+
+    const handleContextChange = (factor: string) => {
+        setConfig(prev => {
+            const newContext = prev.context.includes(factor)
+                ? prev.context.filter(f => f !== factor)
+                : [...prev.context, factor];
+            return { ...prev, context: newContext };
+        });
+    };
+
     const handleMitigationChange = (id: string, field: keyof Mitigation, value: any) => {
         setConfig(prev => {
             const updated = prev.mitigations.map(m => {
                 if (m.id === id) {
                     const newMit = { ...m, [field]: value };
-                    // Auto-update efficacy if controlType changes
                     if (field === "controlType" && value !== "OTRO (PERSONALIZADO)") {
                         const suggestion = CONTROL_TYPES.find(ct => ct.name === value);
                         if (suggestion) {
                             newMit.efficacy = suggestion.efficacy;
+                            newMit.nature = suggestion.nature;
                         }
                     }
                     return newMit;
@@ -279,21 +458,26 @@ export default function RiskMatrixConfig() {
             const res = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(query));
             const actions = await res.json();
 
-            const mitigations: Mitigation[] = Array.isArray(actions) ? actions.map(a => ({
-                id: a.id.toString(),
-                controlType: a.type || "OTRO (PERSONALIZADO)",
-                customControlName: a.type || "",
-                description: a.description,
-                efficacy: 0.5,
-                responsible: a.person || ""
-            })) : [];
+            const mitigations: Mitigation[] = Array.isArray(actions) ? actions.map(a => {
+                const ctMatch = CONTROL_TYPES.find(ct => ct.name === a.type);
+                return {
+                    id: a.id.toString(),
+                    controlType: a.type || "OTRO (PERSONALIZADO)",
+                    nature: ctMatch ? ctMatch.nature : "Preventivo",
+                    customControlName: a.type || "",
+                    description: a.description,
+                    efficacy: ctMatch ? ctMatch.efficacy : 0.5,
+                    responsible: a.person || "",
+                    evaluation: "SÍ SE ESTÁN APLICANDO Y SON ADECUADOS"
+                };
+            }) : [];
 
             setConfig({
                 id: risk.id.toString(),
                 dependenceId: risk.dependence_id || auth.dependenceId,
                 catalogRisk: risk.name || "PERSONALIZADO",
                 customRiskName: risk.name || "",
-                riskType: risk.type || RISK_TYPES[0],
+                riskType: risk.type || activeRiskTypes.current[0],
                 description: risk.description || "",
                 comment: risk.comments || "",
                 probability: risk.probability || 3,
@@ -302,11 +486,19 @@ export default function RiskMatrixConfig() {
                 mitigations: mitigations.length > 0 ? mitigations : [{ 
                     id: "1", 
                     controlType: CONTROL_TYPES[0].name, 
+                    nature: CONTROL_TYPES[0].nature,
                     customControlName: "",
                     description: "", 
                     efficacy: CONTROL_TYPES[0].efficacy, 
-                    responsible: "" 
-                }]
+                    responsible: "",
+                    evaluation: "SÍ SE ESTÁN APLICANDO Y SON ADECUADOS"
+                }],
+                context: [],
+                associatedImpacts: [],
+                treatment: TREATMENT_OPTIONS[1],
+                residualProbability: 2,
+                residualImpact: 10,
+                requiresImprovement: false
             });
 
             setIsEditing(true);
@@ -349,26 +541,40 @@ export default function RiskMatrixConfig() {
             mitigations: [{ 
                 id: "1", 
                 controlType: CONTROL_TYPES[0].name, 
+                nature: CONTROL_TYPES[0].nature,
                 customControlName: "",
                 description: "", 
                 efficacy: CONTROL_TYPES[0].efficacy, 
-                responsible: "" 
-            }]
+                responsible: "",
+                evaluation: "SÍ SE ESTÁN APLICANDO Y SON ADECUADOS"
+            }],
+            context: [],
+            associatedImpacts: [],
+            treatment: TREATMENT_OPTIONS[1],
+            residualProbability: 2,
+            residualImpact: 10,
+            requiresImprovement: false
         });
         setIsEditing(false);
         setStep(1);
     };
 
     const inherentRisk = config.impact * config.probability;
-    const maxEfficacy = Math.max(...config.mitigations.map(m => m.efficacy), 0);
-    const residualRisk = inherentRisk * (1 - maxEfficacy);
+    const residualRisk = config.residualImpact * config.residualProbability;
+    
+    // Eficacia promedio/combinada para mostrar como %
+    const combinedEfficacy = 1 - (residualRisk / inherentRisk || 1);
 
-    const getRiskLevel = (score: number) => {
-        if (score <= 5) return { label: "Bajo", color: "text-green-500", bg: "bg-green-500/10" };
-        if (score <= 12) return { label: "Moderado", color: "text-yellow-500", bg: "bg-yellow-500/10" };
-        if (score <= 20) return { label: "Alto", color: "text-orange-500", bg: "bg-orange-500/10" };
-        return { label: "Extremo", color: "text-red-500", bg: "bg-red-500/10" };
+    const getRiskZone = (score: number) => {
+        if (score <= 5) return { label: "Zona Aceptable", color: "text-green-500", bg: "bg-green-500/10", zone: "Verde" };
+        if (score <= 10) return { label: "Zona Tolerable", color: "text-yellow-500", bg: "bg-yellow-500/10", zone: "Amarillo" };
+        if (score <= 15) return { label: "Zona Moderada", color: "text-orange-400", bg: "bg-orange-400/10", zone: "Naranja Claro" };
+        if (score <= 25) return { label: "Zona Importante", color: "text-orange-600", bg: "bg-orange-600/10", zone: "Naranja" };
+        return { label: "Zona Inaceptable", color: "text-red-500", bg: "bg-red-500/10", zone: "Rojo" };
     };
+
+    const isInacceptable = getRiskZone(inherentRisk).zone === "Rojo";
+    const canSave = !isInacceptable || config.mitigations.length >= 2;
 
     const filteredRisks = risksList.filter(r => 
         (r.name || r.risk_name || "").toLowerCase().includes(searchTerm.toLowerCase())
@@ -503,14 +709,14 @@ export default function RiskMatrixConfig() {
                         <div className="flex items-center justify-between mb-10 max-w-4xl mx-auto">
                             {[
                                 { n: 1, label: "Identificación", icon: FileText },
-                                { n: 2, label: "Controles", icon: ShieldCheck },
-                                { n: 3, label: "Impacto Residual", icon: Zap }
+                                { n: 2, label: "Inherente", icon: Calculator },
+                                { n: 3, label: "Controles", icon: ShieldCheck },
+                                { n: 4, label: "Residual", icon: Zap }
                             ].map((s) => (
                                 <div key={s.n} className="flex flex-col items-center gap-3 relative z-10">
                                     <div className={cn(
                                         "w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-500",
-                                        step >= s.n ? "bg-blue-600 text-white shadow-xl shadow-blue-600/30 scale-110" : "bg-gray-200 dark:bg-gray-800 text-gray-400",
-                                        isEditing && s.n === 1 && "opacity-50 grayscale"
+                                        step >= s.n ? "bg-blue-600 text-white shadow-xl shadow-blue-600/30 scale-110" : "bg-gray-200 dark:bg-gray-800 text-gray-400"
                                     )}>
                                         <s.icon className="w-5 h-5" />
                                     </div>
@@ -521,7 +727,7 @@ export default function RiskMatrixConfig() {
                                 </div>
                             ))}
                             <div className="absolute left-1/2 -translate-x-1/2 w-full max-w-lg h-[2px] bg-gray-200 dark:bg-gray-800 -z-10 mt-[-20px]">
-                                <div className="h-full bg-blue-500 transition-all duration-700" style={{ width: `${((step - 1) / 2) * 100}%` }}></div>
+                                <div className="h-full bg-blue-500 transition-all duration-700" style={{ width: `${((step - 1) / 3) * 100}%` }}></div>
                             </div>
                         </div>
 
@@ -529,17 +735,9 @@ export default function RiskMatrixConfig() {
                             <div className="lg:col-span-8 space-y-8">
                                 {step === 1 && (
                                     <div className="bg-white dark:bg-gray-800 rounded-[40px] p-10 shadow-2xl border border-gray-100 dark:border-gray-700 space-y-10 animate-in fade-in slide-in-from-left-8 duration-500">
-                                        <div className="flex justify-between items-start">
-                                            <div className="space-y-2">
-                                                <h3 className="text-2xl font-black text-gray-900 dark:text-white">Registrar Riesgo</h3>
-                                                <p className="text-gray-500 dark:text-gray-400 text-sm">Categorización SARLAFT dinámica.</p>
-                                            </div>
-                                            {isAutoCalculating && (
-                                                <div className="flex items-center gap-2 text-blue-500 animate-pulse">
-                                                    <RefreshCw className="w-4 h-4 animate-spin" />
-                                                    <span className="text-[10px] font-black uppercase">Actualizando...</span>
-                                                </div>
-                                            )}
+                                        <div className="space-y-2">
+                                            <h3 className="text-2xl font-black text-gray-900 dark:text-white uppercase tracking-tight">Paso 1: Identificación del Riesgo</h3>
+                                            <p className="text-gray-500 dark:text-gray-400 text-sm italic">Caracterización institucional para SARLAFT/PTEE.</p>
                                         </div>
 
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -549,9 +747,9 @@ export default function RiskMatrixConfig() {
                                                     disabled={isEditing}
                                                     value={config.riskType}
                                                     onChange={(e) => setConfig({...config, riskType: e.target.value})}
-                                                    className="w-full px-6 py-5 bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-700 rounded-[24px] focus:ring-4 focus:ring-blue-500/20 outline-none transition-all text-gray-900 dark:text-white appearance-none disabled:opacity-60 shadow-sm"
+                                                    className="w-full px-6 py-5 bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-700 rounded-[24px] focus:ring-4 focus:ring-blue-500/20 outline-none transition-all appearance-none shadow-sm dark:text-white"
                                                 >
-                                                    {RISK_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                                                    {activeRiskTypes.current.map(t => <option key={t} value={t}>{t}</option>)}
                                                 </select>
                                             </div>
 
@@ -563,9 +761,9 @@ export default function RiskMatrixConfig() {
                                                     disabled={isEditing}
                                                     value={config.catalogRisk}
                                                     onChange={(e) => setConfig({...config, catalogRisk: e.target.value})}
-                                                    className="w-full px-6 py-5 bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-700 rounded-[24px] focus:ring-4 focus:ring-blue-500/20 outline-none transition-all text-gray-900 dark:text-white appearance-none disabled:opacity-60 shadow-sm"
+                                                    className="w-full px-6 py-5 bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-700 rounded-[24px] focus:ring-4 focus:ring-blue-500/20 outline-none transition-all appearance-none shadow-sm dark:text-white"
                                                 >
-                                                    {(CATALOG_BY_TYPE[config.riskType] || []).map(r => <option key={r} value={r}>{r}</option>)}
+                                                    {(activeCatalog.current[config.riskType] || []).map(r => <option key={r} value={r}>{r}</option>)}
                                                     <option value="PERSONALIZADO">-- OTRO (PERSONALIZADO) --</option>
                                                 </select>
                                             </div>
@@ -580,18 +778,18 @@ export default function RiskMatrixConfig() {
                                                         value={config.customRiskName}
                                                         onChange={(e) => setConfig({...config, customRiskName: e.target.value})}
                                                         placeholder="Especifique el nombre del riesgo..."
-                                                        className="w-full px-6 py-5 bg-blue-50/30 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-800 rounded-[24px] focus:ring-4 focus:ring-blue-500/20 outline-none transition-all text-gray-900 dark:text-white"
+                                                        className="w-full px-6 py-5 bg-blue-50/30 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-800 rounded-[24px] focus:ring-4 focus:ring-blue-500/20 outline-none transition-all dark:text-white"
                                                     />
                                                 </div>
                                             )}
 
                                             <div className="space-y-4 col-span-full pt-4 border-t border-gray-100 dark:border-gray-700">
-                                                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Contexto Organizacional</label>
+                                                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Dependencia / Área Responsable</label>
                                                 <select 
-                                                    disabled={isEditing || !auth.isSuper || loading}
+                                                    disabled={isEditing || !auth.isSuper}
                                                     value={config.dependenceId}
                                                     onChange={(e) => setConfig({...config, dependenceId: e.target.value})}
-                                                    className="w-full px-6 py-5 bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-700 rounded-[24px] focus:ring-4 focus:ring-blue-500/20 outline-none transition-all text-gray-900 dark:text-white appearance-none disabled:opacity-60"
+                                                    className="w-full px-6 py-5 bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-700 rounded-[24px] focus:ring-4 focus:ring-blue-500/20 outline-none appearance-none transition-all dark:text-white"
                                                 >
                                                     <option value="">Seleccione una dependencia...</option>
                                                     {dependencies.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
@@ -604,38 +802,8 @@ export default function RiskMatrixConfig() {
                                                     disabled={isEditing}
                                                     value={config.description}
                                                     onChange={(e) => setConfig({...config, description: e.target.value})}
-                                                    placeholder="Escribe la descripción del riesgo..."
-                                                    className="w-full px-6 py-5 bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-700 rounded-[24px] focus:ring-4 focus:ring-blue-500/20 outline-none transition-all text-gray-900 dark:text-white h-24 disabled:opacity-60"
-                                                />
-                                            </div>
-                                        </div>
-
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-12 pt-6 border-t border-gray-100 dark:border-gray-700">
-                                            <div className={cn("space-y-6", isEditing && "opacity-50")}>
-                                                <div className="flex justify-between items-center">
-                                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Probabilidad</label>
-                                                    <span className="text-2xl font-black text-blue-500">{config.probability}</span>
-                                                </div>
-                                                <input 
-                                                    type="range" min="1" max="5" 
-                                                    disabled={isEditing}
-                                                    value={config.probability}
-                                                    onChange={(e) => setConfig({...config, probability: parseInt(e.target.value)})}
-                                                    className="w-full h-3 bg-gray-100 dark:bg-gray-700 rounded-full appearance-none cursor-pointer accent-blue-600 shadow-sm"
-                                                />
-                                            </div>
-
-                                            <div className={cn("space-y-6", isEditing && "opacity-50")}>
-                                                <div className="flex justify-between items-center">
-                                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Impacto</label>
-                                                    <span className="text-2xl font-black text-amber-500">{config.impact}</span>
-                                                </div>
-                                                <input 
-                                                    type="range" min="1" max="5" 
-                                                    disabled={isEditing}
-                                                    value={config.impact}
-                                                    onChange={(e) => setConfig({...config, impact: parseInt(e.target.value)})}
-                                                    className="w-full h-3 bg-gray-100 dark:bg-gray-700 rounded-full appearance-none cursor-pointer accent-amber-500 shadow-sm"
+                                                    placeholder="Escriba la descripción del riesgo..."
+                                                    className="w-full px-6 py-5 bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-700 rounded-[24px] focus:ring-4 focus:ring-blue-500/20 outline-none transition-all h-24 dark:text-white"
                                                 />
                                             </div>
                                         </div>
@@ -643,108 +811,203 @@ export default function RiskMatrixConfig() {
                                 )}
 
                                 {step === 2 && (
+                                    <div className="bg-white dark:bg-gray-800 rounded-[40px] p-10 shadow-2xl border border-gray-100 dark:border-gray-700 space-y-12 animate-in fade-in slide-in-from-right-8 duration-500">
+                                        <div className="text-center space-y-4">
+                                            <div className="w-20 h-20 bg-blue-500/10 text-blue-500 rounded-3xl flex items-center justify-center mx-auto shadow-inner">
+                                                <Calculator className="w-10 h-10" />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <h3 className="text-3xl font-black text-gray-900 dark:text-white uppercase tracking-tight">Paso 2: Riesgo Inherente</h3>
+                                                <p className="text-gray-500 dark:text-gray-400 text-sm">Evaluación del impacto y probabilidad base.</p>
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+                                            <div className="space-y-8">
+                                                <div className="space-y-6">
+                                                    <div className="flex justify-between items-center">
+                                                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Probabilidad (Escala 1-4)</label>
+                                                        <span className="text-2xl font-black text-blue-500">{config.probability}</span>
+                                                    </div>
+                                                    <input 
+                                                        type="range" min="1" max="4" 
+                                                        disabled={isEditing}
+                                                        value={config.probability}
+                                                        onChange={(e) => setConfig({...config, probability: parseInt(e.target.value)})}
+                                                        className="w-full h-3 bg-gray-100 dark:bg-gray-700 rounded-full appearance-none cursor-pointer accent-blue-600 shadow-sm"
+                                                    />
+                                                    <div className="flex justify-between text-[10px] text-gray-400 font-bold px-1 uppercase tracking-tighter">
+                                                        <span>Baja</span>
+                                                        <span>M. Baja</span>
+                                                        <span>Media</span>
+                                                        <span>Alta</span>
+                                                    </div>
+                                                </div>
+
+                                                <div className="space-y-6 pt-6 border-t border-gray-100 dark:border-gray-700">
+                                                    <div className="flex justify-between items-center">
+                                                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Impacto (Escala 5-20)</label>
+                                                        <span className="text-2xl font-black text-amber-500">{config.impact}</span>
+                                                    </div>
+                                                    <div className="flex gap-2">
+                                                        {[5, 10, 20].map(val => (
+                                                            <button 
+                                                                key={val}
+                                                                disabled={isEditing}
+                                                                onClick={() => setConfig({...config, impact: val})}
+                                                                className={cn(
+                                                                    "flex-1 py-3 rounded-xl text-xs font-black transition-all border",
+                                                                    config.impact === val ? "bg-amber-500 text-white border-amber-500 shadow-lg" : "bg-white dark:bg-gray-800 text-gray-400 border-gray-100 dark:border-gray-700 dark:text-white"
+                                                                )}
+                                                            >
+                                                                {val === 5 ? 'Leve' : val === 10 ? 'Mod' : 'Cat'}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+
+                                                <div className="space-y-4 pt-6 border-t border-gray-100 dark:border-gray-700">
+                                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                                                        <Activity className="w-4 h-4 text-purple-500" /> Opción de Manejo
+                                                    </label>
+                                                    <select 
+                                                        value={config.treatment}
+                                                        onChange={(e) => setConfig({ ...config, treatment: e.target.value })}
+                                                        className="w-full px-5 py-4 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-2xl text-sm outline-none transition-all dark:text-white"
+                                                    >
+                                                        {TREATMENT_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                                                    </select>
+                                                </div>
+                                            </div>
+
+                                            <div className="flex flex-col justify-center items-center p-12 bg-gray-50 dark:bg-gray-900/50 rounded-[40px] border border-gray-100 dark:border-gray-700 space-y-6 relative overflow-hidden group">
+                                                <div className={cn("absolute inset-0 opacity-10 transition-colors duration-500", getRiskZone(inherentRisk).bg)} />
+                                                <div className="text-center relative z-10">
+                                                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-2">Puntaje Inherente</div>
+                                                    <div className={cn("text-7xl font-black transition-colors duration-500", getRiskZone(inherentRisk).color)}>
+                                                        {inherentRisk}
+                                                    </div>
+                                                </div>
+                                                <div className={cn("px-8 py-3 rounded-full text-xs font-black uppercase tracking-widest shadow-lg transition-all duration-500 relative z-10", getRiskZone(inherentRisk).bg, getRiskZone(inherentRisk).color)}>
+                                                    {getRiskZone(inherentRisk).label}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {step === 3 && (
                                     <div className="bg-white dark:bg-gray-800 rounded-[40px] p-10 shadow-2xl border border-gray-100 dark:border-gray-700 space-y-8 animate-in fade-in slide-in-from-right-8 duration-500">
                                         <div className="flex justify-between items-center">
                                             <div className="space-y-2">
-                                                <h3 className="text-2xl font-black text-gray-900 dark:text-white">Fase 2: Sistema de Control</h3>
-                                                <p className="text-gray-500 dark:text-gray-400 text-sm">Gestione las medidas de mitigación con eficacia sugerida.</p>
+                                                <h3 className="text-2xl font-black text-gray-900 dark:text-white uppercase tracking-tight">Paso 3: Sistema de Control</h3>
+                                                <p className="text-gray-500 dark:text-gray-400 text-sm italic">Mitigación técnica y evaluación de eficacia.</p>
                                             </div>
                                             <button 
                                                 onClick={handleAddMitigation}
-                                                className="p-4 bg-blue-50 dark:bg-blue-900/30 text-blue-500 rounded-2xl hover:bg-blue-100 transition-all active:scale-90"
+                                                className="p-4 bg-blue-600 text-white rounded-2xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-600/20 active:scale-95"
                                             >
                                                 <Plus className="w-6 h-6" />
                                             </button>
                                         </div>
 
-                                        <div className="grid grid-cols-1 gap-6 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+                                        <div className="grid grid-cols-1 gap-8 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
                                             {config.mitigations.map((mitigation, idx) => (
                                                 <div 
                                                     key={mitigation.id}
-                                                    className="p-8 bg-gray-50 dark:bg-gray-900/50 rounded-[32px] border border-gray-100 dark:border-gray-700 space-y-6 group"
+                                                    className="p-8 bg-gray-50 dark:bg-gray-900/50 rounded-[32px] border border-gray-100 dark:border-gray-700 space-y-8 group relative overflow-hidden"
                                                 >
-                                                    <div className="flex justify-between items-center">
-                                                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest italic">Medida #{idx + 1}</span>
+                                                    <div className="flex justify-between items-center relative z-10">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="w-10 h-10 bg-gray-900 text-white rounded-xl flex items-center justify-center font-black text-sm">
+                                                                {idx + 1}
+                                                            </div>
+                                                            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Identificación del Control</span>
+                                                        </div>
                                                         <button 
                                                             onClick={() => handleRemoveMitigation(mitigation.id)}
                                                             className="opacity-0 group-hover:opacity-100 p-2 text-red-400 hover:text-red-500 transition-all"
                                                         >
-                                                            <Trash2 className="w-4 h-4" />
+                                                            <Trash2 className="w-5 h-5" />
                                                         </button>
                                                     </div>
 
-                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 relative z-10">
                                                         <div className="space-y-4">
                                                             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 flex items-center gap-2">
-                                                                <Activity className="w-3 h-3" /> Tipo de Control
+                                                                <Activity className="w-3 h-3" /> Tipo de Control (Naturaleza)
                                                             </label>
                                                             <select 
                                                                 value={mitigation.controlType}
                                                                 onChange={(e) => handleMitigationChange(mitigation.id, "controlType", e.target.value)}
-                                                                className="w-full px-5 py-4 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl text-sm focus:ring-4 focus:ring-blue-500/10 outline-none transition-all appearance-none"
+                                                                className="w-full px-5 py-4 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl text-sm outline-none transition-all dark:text-white"
                                                             >
                                                                 {CONTROL_TYPES.map(ct => <option key={ct.name} value={ct.name}>{ct.name}</option>)}
                                                             </select>
                                                         </div>
                                                         <div className="space-y-4">
                                                             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 flex items-center gap-2">
-                                                                <User className="w-3 h-3" /> Responsable
+                                                                <User className="w-3 h-3" /> Área Responsable
                                                             </label>
                                                             <input 
                                                                 type="text"
                                                                 value={mitigation.responsible}
                                                                 onChange={(e) => handleMitigationChange(mitigation.id, "responsible", e.target.value)}
-                                                                placeholder="Nombre del responsable"
-                                                                className="w-full bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl p-4 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                                                                placeholder="Área o cargo responsable..."
+                                                                className="w-full bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl p-4 text-sm outline-none transition-all dark:text-white"
+                                                                list="responsible-areas"
                                                             />
+                                                            <datalist id="responsible-areas">
+                                                                {RESPONSIBLE_AREAS.map(area => <option key={area} value={area} />)}
+                                                            </datalist>
                                                         </div>
 
-                                                        {mitigation.controlType === "OTRO (PERSONALIZADO)" && (
-                                                            <div className="space-y-4 col-span-full animate-in slide-in-from-top-2 duration-300">
-                                                                <label className="text-[10px] font-black text-blue-500 uppercase tracking-widest ml-1 flex items-center gap-2">
-                                                                    <PlusCircle className="w-3 h-3" /> Nombre del Control Personalizado
-                                                                </label>
-                                                                <input 
-                                                                    type="text"
-                                                                    value={mitigation.customControlName}
-                                                                    onChange={(e) => handleMitigationChange(mitigation.id, "customControlName", e.target.value)}
-                                                                    placeholder="Especifique el control..."
-                                                                    className="w-full px-5 py-4 bg-blue-50/30 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-800 rounded-2xl text-sm outline-none transition-all"
-                                                                />
-                                                            </div>
-                                                        )}
-
                                                         <div className="space-y-4 col-span-full">
-                                                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Descripción Detallada del Control</label>
+                                                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Descripción del Control</label>
                                                             <textarea 
                                                                 value={mitigation.description}
                                                                 onChange={(e) => handleMitigationChange(mitigation.id, "description", e.target.value)}
-                                                                placeholder="Describa el funcionamiento específico del control..."
-                                                                className="w-full bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl p-4 text-sm focus:ring-2 focus:ring-blue-500 outline-none h-24 transition-all"
+                                                                placeholder="¿Cómo opera este control específicamente?"
+                                                                className="w-full bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl p-4 text-sm outline-none h-20 transition-all dark:text-white"
                                                             />
                                                         </div>
-                                                    </div>
 
-                                                    <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-                                                        <div className="flex justify-between items-center">
-                                                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Eficacia Técnica (Auto-calculada)</label>
-                                                            <span className={cn("text-[10px] font-black uppercase px-3 py-1 rounded-full", EFFICACY_LABELS.find(l => mitigation.efficacy === l.value)?.color, "text-white shadow-sm")}>
-                                                                {EFFICACY_LABELS.find(l => mitigation.efficacy === l.value)?.label}
-                                                            </span>
+                                                        <div className="space-y-4">
+                                                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Evaluación de Adecuación</label>
+                                                            <select 
+                                                                value={mitigation.evaluation}
+                                                                onChange={(e) => handleMitigationChange(mitigation.id, "evaluation", e.target.value)}
+                                                                className="w-full px-5 py-4 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl text-sm outline-none transition-all dark:text-white"
+                                                            >
+                                                                <option value="SÍ SE ESTÁN APLICANDO Y SON ADECUADOS">SÍ SE ESTÁN APLICANDO Y SON ADECUADOS</option>
+                                                                <option value="NO SE ESTÁN APLICANDO">NO SE ESTÁN APLICANDO</option>
+                                                                <option value="SE APLICAN PARCIALMENTE">SE APLICAN PARCIALMENTE</option>
+                                                            </select>
                                                         </div>
-                                                        <div className="flex gap-3">
-                                                            {EFFICACY_LABELS.map(level => (
-                                                                <button
-                                                                    key={level.value}
-                                                                    onClick={() => handleMitigationChange(mitigation.id, "efficacy", level.value)}
-                                                                    className={cn(
-                                                                        "flex-1 h-3 rounded-full transition-all duration-300",
-                                                                        mitigation.efficacy === level.value 
-                                                                            ? level.color + " shadow-md" 
-                                                                            : "bg-gray-200 dark:bg-gray-700"
-                                                                    )}
-                                                                />
-                                                            ))}
+
+                                                        <div className="space-y-4">
+                                                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 flex justify-between">
+                                                                <span>Eficacia Técnica de Mitigación</span>
+                                                                <span className="text-blue-500">{(mitigation.efficacy * 100).toFixed(0)}%</span>
+                                                            </label>
+                                                            <div className="flex gap-2">
+                                                                {EFFICACY_LABELS.map(level => {
+                                                                    const isActive = Math.abs(level.value - mitigation.efficacy) < 0.05;
+                                                                    return (
+                                                                        <button
+                                                                            key={level.value}
+                                                                            type="button"
+                                                                            onClick={() => handleMitigationChange(mitigation.id, "efficacy", level.value)}
+                                                                            className={cn(
+                                                                                "flex-1 h-3 rounded-full transition-all duration-300",
+                                                                                isActive ? level.color : "bg-gray-200 dark:bg-gray-700 hover:bg-gray-300"
+                                                                            )}
+                                                                            title={level.label}
+                                                                        />
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                            <div className="text-[9px] text-gray-400 font-bold uppercase text-center tracking-widest">Escala SARLAFT Institucional (Máx 85%)</div>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -753,43 +1016,116 @@ export default function RiskMatrixConfig() {
                                     </div>
                                 )}
 
-                                {step === 3 && (
+                                {step === 4 && (
                                     <div className="bg-white dark:bg-gray-800 rounded-[40px] p-10 shadow-2xl border border-gray-100 dark:border-gray-700 space-y-10 animate-in zoom-in-95 duration-500">
                                         <div className="text-center space-y-4">
                                             <div className="w-20 h-20 bg-green-500/10 text-green-500 rounded-3xl flex items-center justify-center mx-auto shadow-inner">
                                                 <Zap className="w-10 h-10" />
                                             </div>
                                             <div className="space-y-1">
-                                                <h3 className="text-3xl font-black text-gray-900 dark:text-white">Impacto Residual</h3>
-                                                <p className="text-gray-500 dark:text-gray-400 text-sm max-w-md mx-auto">Nivel de riesgo remanente tras aplicar las mitigaciones.</p>
+                                                <h3 className="text-3xl font-black text-gray-900 dark:text-white uppercase tracking-tight">Paso 4: Riesgo Residual y Mejora</h3>
+                                                <p className="text-gray-500 dark:text-gray-400 text-sm">Documentación del remanente y Plan PHVA.</p>
                                             </div>
                                         </div>
 
-                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                                            <div className="p-8 bg-gray-50 dark:bg-gray-900/50 rounded-[32px] border border-gray-100 dark:border-gray-700 text-center space-y-2">
-                                                <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Inherente</div>
-                                                <div className="text-3xl font-black text-gray-900 dark:text-white">{inherentRisk}</div>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+                                            <div className="space-y-8">
+                                                <div className="p-8 bg-blue-50/50 dark:bg-blue-900/10 rounded-3xl border border-blue-100 dark:border-blue-900/30 space-y-8">
+                                                    <h4 className="text-xs font-black text-blue-600 uppercase tracking-[0.2em] flex items-center gap-2">
+                                                        <RefreshCw className="w-4 h-4" /> Recalibración Manual del Residual
+                                                    </h4>
+                                                    
+                                                    <div className="space-y-4">
+                                                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Probabilidad Residual</label>
+                                                        <div className="flex gap-2">
+                                                            {[1, 2, 3].map(val => (
+                                                                <button
+                                                                    key={val}
+                                                                    onClick={() => setConfig({ ...config, residualProbability: val })}
+                                                                    className={cn(
+                                                                        "flex-1 py-3 rounded-xl text-xs font-bold transition-all border",
+                                                                        config.residualProbability === val ? "bg-blue-600 text-white border-blue-600 shadow-md" : "bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 dark:text-white"
+                                                                    )}
+                                                                >
+                                                                    {val === 1 ? "Baja" : val === 2 ? "Media" : "Alta"}
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="space-y-4">
+                                                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Impacto Residual</label>
+                                                        <div className="flex gap-2">
+                                                            {[5, 10, 20].map(val => (
+                                                                <button
+                                                                    key={val}
+                                                                    onClick={() => setConfig({ ...config, residualImpact: val })}
+                                                                    className={cn(
+                                                                        "flex-1 py-3 rounded-xl text-xs font-bold transition-all border",
+                                                                        config.residualImpact === val ? "bg-orange-500 text-white border-orange-500 shadow-md" : "bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 dark:text-white"
+                                                                    )}
+                                                                >
+                                                                    {val === 5 ? "Leve" : val === 10 ? "Mod" : "Cat"}
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                <label className="flex items-center gap-3 cursor-pointer p-5 rounded-2xl bg-purple-50/50 dark:bg-purple-900/10 border border-purple-100 dark:border-purple-900/20 transition-all hover:bg-purple-50">
+                                                    <input 
+                                                        type="checkbox"
+                                                        checked={config.requiresImprovement}
+                                                        onChange={(e) => setConfig({ ...config, requiresImprovement: e.target.checked })}
+                                                        className="w-5 h-5 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                                                    />
+                                                    <div className="flex-1">
+                                                        <div className="text-sm font-black text-purple-900 dark:text-purple-100">Requiere Plan de Mejora</div>
+                                                        <div className="text-[10px] text-purple-400 font-bold uppercase tracking-widest">Active para documentar Ciclo PHVA</div>
+                                                    </div>
+                                                </label>
                                             </div>
-                                            <div className="p-8 bg-gray-50 dark:bg-gray-900/50 rounded-[32px] border border-gray-100 dark:border-gray-700 text-center space-y-2">
-                                                <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Eficacia Máxima</div>
-                                                <div className="text-3xl font-black text-blue-500">{(maxEfficacy * 100).toFixed(0)}%</div>
-                                            </div>
-                                            <div className="p-8 bg-blue-600 rounded-[32px] text-center space-y-2 shadow-xl shadow-blue-600/30">
-                                                <div className="text-[10px] font-black text-white/60 uppercase tracking-widest">Residual</div>
-                                                <div className="text-3xl font-black text-white">{residualRisk.toFixed(1)}</div>
+
+                                            <div className="flex flex-col justify-center items-center p-12 bg-gray-900 rounded-[40px] shadow-2xl relative overflow-hidden group">
+                                                <div className={cn("absolute inset-0 opacity-20 transition-colors duration-500", getRiskZone(residualRisk).bg)} />
+                                                <div className="text-center relative z-10">
+                                                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-2">Resultado Residual Final</div>
+                                                    <div className={cn("text-8xl font-black transition-colors duration-500", getRiskZone(residualRisk).color)}>
+                                                        {residualRisk}
+                                                    </div>
+                                                </div>
+                                                <div className={cn("mt-6 px-10 py-3 rounded-full text-xs font-black uppercase tracking-widest shadow-xl transition-all duration-500 relative z-10", getRiskZone(residualRisk).bg, getRiskZone(residualRisk).color)}>
+                                                    {getRiskZone(residualRisk).label}
+                                                </div>
                                             </div>
                                         </div>
+
+                                        {config.requiresImprovement && (
+                                            <div className="mt-8 p-10 bg-gray-50 dark:bg-gray-900/50 rounded-[32px] border border-gray-100 dark:border-gray-700 space-y-8 animate-in slide-in-from-top-4 duration-500">
+                                                <h4 className="text-sm font-black text-purple-600 uppercase tracking-[0.2em] flex items-center gap-2">
+                                                    <Activity className="w-5 h-5" /> MÓDULO 9 — PLAN DE MEJORA INSTITUCIONAL (Ciclo PHVA)
+                                                </h4>
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                                    {["Planear", "Hacer", "Verificar", "Actuar"].map((fase) => (
+                                                        <div key={fase} className="p-6 bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 space-y-4 shadow-sm">
+                                                            <div className="text-[10px] font-black text-purple-500 uppercase tracking-[0.2em]">{fase}</div>
+                                                            <textarea className="w-full px-4 py-3 text-sm bg-gray-50 dark:bg-gray-900 border-none rounded-xl h-24 resize-none outline-none focus:ring-2 focus:ring-purple-500/20 dark:text-white" placeholder={`Especifique acciones de ${fase}...`} />
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
 
                                         <div className="p-8 bg-gray-900 rounded-[32px] text-white space-y-6">
                                             <div className="flex items-center gap-3">
                                                 <FileText className="w-5 h-5 text-blue-400" />
-                                                <h4 className="font-bold">Justificación Técnica del Resultado</h4>
+                                                <h4 className="font-bold uppercase tracking-widest text-xs">MÓDULO 10 — Justificación Técnica de la Mitigación</h4>
                                             </div>
                                             <textarea 
                                                 value={config.justification}
                                                 onChange={(e) => setConfig({...config, justification: e.target.value})}
-                                                placeholder="Documente el sustento técnico de la mitigación..."
-                                                className="w-full bg-white/5 border border-white/10 rounded-2xl p-5 text-sm focus:ring-2 focus:ring-blue-500 outline-none h-32 transition-all"
+                                                placeholder="Sustente técnicamente por qué se asignó esta eficacia y los resultados residuales obtenidos..."
+                                                className="w-full bg-white/5 border border-white/10 rounded-2xl p-6 text-sm focus:ring-2 focus:ring-blue-500 outline-none h-32 transition-all"
                                             />
                                         </div>
                                     </div>
@@ -797,7 +1133,7 @@ export default function RiskMatrixConfig() {
 
                                 <div className="flex justify-between items-center pt-4">
                                     <button 
-                                        disabled={step === 1 && !isEditing}
+                                        disabled={step === 1}
                                         onClick={() => setStep(prev => prev - 1)}
                                         className="flex items-center gap-2 px-8 py-4 text-gray-500 font-bold hover:text-gray-700 disabled:opacity-0 transition-all"
                                     >
@@ -805,7 +1141,7 @@ export default function RiskMatrixConfig() {
                                         Anterior
                                     </button>
                                     
-                                    {step < 3 ? (
+                                    {step < 4 ? (
                                         <button 
                                             onClick={() => setStep(prev => prev + 1)}
                                             className="flex items-center gap-2 px-10 py-5 bg-blue-600 text-white rounded-[24px] font-black shadow-xl shadow-blue-600/30 hover:bg-blue-700 hover:scale-105 active:scale-95 transition-all"
@@ -814,14 +1150,26 @@ export default function RiskMatrixConfig() {
                                             <ChevronRight className="w-5 h-5" />
                                         </button>
                                     ) : (
-                                        <button 
-                                            disabled={loading}
-                                            onClick={handleSave}
-                                            className="flex items-center gap-2 px-10 py-5 bg-green-600 text-white rounded-[24px] font-black shadow-xl shadow-green-600/30 hover:bg-green-700 hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
-                                        >
-                                            {isEditing ? 'Actualizar Controles' : 'Finalizar y Guardar'}
-                                            <Save className="w-5 h-5" />
-                                        </button>
+                                        <div className="relative">
+                                            {!canSave && (
+                                                <p className="absolute -top-10 right-0 text-[10px] text-red-500 font-bold bg-white p-2 rounded shadow-sm border border-red-100 flex items-center gap-2">
+                                                    <AlertTriangle className="w-3 h-3" /> Requiere mín. 2 controles por Riesgo Inaceptable
+                                                </p>
+                                            )}
+                                            <button 
+                                                disabled={!canSave}
+                                                onClick={handleSave}
+                                                className={cn(
+                                                    "px-10 py-5 rounded-[24px] font-black flex items-center gap-3 transition-all",
+                                                    canSave 
+                                                        ? "bg-blue-600 text-white shadow-xl shadow-blue-600/30 hover:bg-blue-700 hover:scale-105 active:scale-95"
+                                                        : "bg-gray-200 text-gray-400 cursor-not-allowed"
+                                                )}
+                                            >
+                                                {isEditing ? 'Actualizar Riesgo' : 'Finalizar y Guardar'}
+                                                <Save className="w-5 h-5" />
+                                            </button>
+                                        </div>
                                     )}
                                 </div>
                             </div>
@@ -838,8 +1186,8 @@ export default function RiskMatrixConfig() {
                                     <div className="space-y-6">
                                         <div className="flex justify-between items-center text-sm">
                                             <span className="text-gray-400 font-medium">Inherente</span>
-                                            <span className={cn("font-black uppercase text-[10px] px-2 py-1 rounded-md", getRiskLevel(inherentRisk).bg, getRiskLevel(inherentRisk).color)}>
-                                                {getRiskLevel(inherentRisk).label} ({inherentRisk})
+                                            <span className={cn("font-black uppercase text-[10px] px-2 py-1 rounded-md", getRiskZone(inherentRisk).bg, getRiskZone(inherentRisk).color)}>
+                                                {getRiskZone(inherentRisk).label} ({inherentRisk})
                                             </span>
                                         </div>
                                         <div className="flex justify-between items-center text-sm">
@@ -849,12 +1197,12 @@ export default function RiskMatrixConfig() {
                                         <div className="pt-6 border-t border-gray-100 dark:border-gray-700">
                                             <div className="flex justify-between items-end mb-2">
                                                 <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Riesgo Residual</span>
-                                                <span className={cn("text-lg font-black", getRiskLevel(residualRisk).color)}>{residualRisk.toFixed(1)}</span>
+                                                <span className={cn("text-lg font-black", getRiskZone(residualRisk).color)}>{residualRisk}</span>
                                             </div>
                                             <div className="w-full h-2 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
                                                 <div 
-                                                    className={cn("h-full transition-all duration-1000", getRiskLevel(residualRisk).bg.replace('/10', ''))}
-                                                    style={{ width: `${(residualRisk / 25) * 100}%` }}
+                                                    className={cn("h-full transition-all duration-1000", getRiskZone(residualRisk).color.replace('text-', 'bg-'))}
+                                                    style={{ width: `${(residualRisk / 80) * 100}%` }}
                                                 />
                                             </div>
                                         </div>

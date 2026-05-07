@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { LayoutDashboard, List, AlertTriangle, Zap, Activity } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import KpiCard from "./dashboard/KpiCard";
 import ChartCard from "./dashboard/ChartCard";
@@ -77,6 +78,12 @@ export default function ReporteriaGeneralClient() {
     const [impactFilter, setImpactFilter] = useState<number[]>([1, 2, 3, 4, 5]);
     const [probFilter, setProbFilter] = useState<number[]>([1, 2, 3, 4, 5]);
     const [riskDetailsRows, setRiskDetailsRows] = useState<any[]>([]);
+    const [matrixMode, setMatrixMode] = useState<"deps" | "inherent" | "residual">("deps");
+    const [matrixDepId, setMatrixDepId] = useState<string>("");
+    const [individualRisks, setIndividualRisks] = useState<any[]>([]);
+    const [allDependencies, setAllDependencies] = useState<any[]>([]);
+
+    const isFirstRender = useRef(true);
 
     // 1. Detección de Roles y Dependencia (Memoized para evitar fugas de seguridad)
     const auth = useMemo(() => {
@@ -84,14 +91,35 @@ export default function ReporteriaGeneralClient() {
         const depId = searchParams.get("dependence_id") || "";
         const uId = searchParams.get("user_id") || "";
         
+        const isSuper = rawRole === "1" || rawRole === "SUPER";
+        
+        // Initial dependency filter
+        if (isFirstRender.current && depId) {
+            setMatrixDepId(depId);
+            isFirstRender.current = false;
+        } else if (isFirstRender.current && isSuper) {
+            // We'll set this once dependencies are loaded
+        }
+
         return {
-            isSuper: rawRole === "1" || rawRole === "SUPER",
+            isSuper,
             isAdmin: rawRole === "2" || rawRole === "ADMIN",
             isUser: rawRole === "3" || rawRole === "USER",
             dependenceId: depId,
             userId: uId
         };
     }, [searchParams]);
+
+
+    const EFFICACY_MAP: Record<string, { eff: number, nature: "Preventivo" | "Detectivo" }> = {
+        "Verificación Automática en Listas Restrictivas": { eff: 0.85, nature: "Preventivo" },
+        "Monitoreo Transaccional Automatizado": { eff: 0.85, nature: "Detectivo" },
+        "Debida Diligencia Intensificada (Manual)": { eff: 0.65, nature: "Preventivo" },
+        "Reporte de Operaciones Sospechosas (ROS)": { eff: 0.75, nature: "Detectivo" },
+        "Capacitación y Concienciación Periódica": { eff: 0.40, nature: "Preventivo" },
+        "Conciliación de Saldos Mensual": { eff: 0.55, nature: "Detectivo" },
+        "Auditoría Interna de Procesos": { eff: 0.70, nature: "Detectivo" },
+    };
 
     useEffect(() => {
         async function fetchData() {
@@ -111,6 +139,30 @@ export default function ReporteriaGeneralClient() {
                 const whereClause = getWhereClause();
                 const whereClauseCt = getWhereClause("ct");
                 const matrixFilter = auth.isSuper ? '1=1' : `dt.id = '${auth.dependenceId}'`;
+
+                // Fetch dependencies for dropdown
+                const depsRes = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`SELECT id, name FROM dependence_tbl ORDER BY name ASC`));
+                const depsD = await depsRes.json();
+                setAllDependencies(Array.isArray(depsD) ? depsD : []);
+
+                // Default selected dep for SUPER
+                if (auth.isSuper && !matrixDepId && Array.isArray(depsD)) {
+                    const adminSys = depsD.find(d => d.name.toLowerCase().includes("administración sistema") || d.name.toLowerCase().includes("administracion sistema"));
+                    if (adminSys) setMatrixDepId(adminSys.id);
+                    else if (depsD.length > 0) setMatrixDepId(depsD[0].id);
+                } else if (!auth.isSuper && auth.dependenceId) {
+                    setMatrixDepId(auth.dependenceId);
+                }
+
+                // Fetch Individual Risks for modes 2 & 3
+                const indRisksRes = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
+                    SELECT rdt.id, rdt.name, rdt.impact, rdt.probability, rat.dependence_id, rat.type as control_type, rat.description as action_desc
+                    FROM riesgos_judiciales_db.risk_data_tbl rdt
+                    INNER JOIN riesgos_judiciales_db.risk_action_tbl rat ON rat.risk_id = rdt.id
+                    WHERE rat.dependence_id IS NOT NULL
+                `));
+                const indRisksD = await indRisksRes.json();
+                setIndividualRisks(Array.isArray(indRisksD) ? indRisksD : []);
 
                 // Fetching con filtros forzados
                 const kpiResponse = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
@@ -319,7 +371,7 @@ export default function ReporteriaGeneralClient() {
                     <div className="flex items-center gap-4">
                         <h2 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Reportería General</h2>
                         <a 
-                            href="/config" 
+                            href={`/dashboard/risk-config?${searchParams.toString()}`} 
                             className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl text-xs font-black uppercase tracking-tighter hover:bg-gray-50 dark:hover:bg-gray-700 transition-all shadow-sm"
                         >
                             <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
@@ -334,121 +386,218 @@ export default function ReporteriaGeneralClient() {
                     {data.kpis.map((kpi, idx) => <KpiCard key={idx} {...kpi} />)}
                 </div>
 
-                <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-md rounded-[32px] p-8 shadow-xl border border-gray-100 dark:border-gray-700 mb-8 animate-in fade-in slide-in-from-top-4 duration-700">
-                    <div className="flex items-center gap-3 mb-8 pb-4 border-b border-gray-100 dark:border-gray-700">
-                        <div className="w-2 h-6 bg-blue-500 rounded-full animate-pulse" />
-                        <h3 className="text-sm font-black uppercase tracking-widest text-gray-900 dark:text-gray-100">
-                            Consola de Filtrado de Riesgos
-                        </h3>
-                    </div>
-
-                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                        {/* NIVEL DE IMPACTO */}
-                        <div className="lg:col-span-3 space-y-4">
-                            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Nivel de Impacto</p>
-                            <div className="flex flex-wrap gap-2">
-                                {["Muy Bajo", "Bajo", "Medio", "Alto", "Muy Alto"].map((label, i) => {
-                                    const val = i + 1;
-                                    const isActive = impactFilter.includes(val);
-                                    return (
-                                        <button
-                                            key={i}
-                                            onClick={() => setImpactFilter(prev => prev.includes(val) ? prev.filter(v => v !== val) : [...prev, val])}
-                                            className={cn(
-                                                "px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all duration-300 border",
-                                                isActive
-                                                    ? "bg-amber-500 text-white border-amber-500 shadow-lg shadow-amber-500/20 scale-105"
-                                                    : "bg-amber-50/50 text-amber-600 border-amber-100 hover:border-amber-300 dark:bg-amber-900/10 dark:border-amber-900/30 dark:text-amber-400"
-                                            )}
-                                        >
-                                            {label}
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        </div>
-
-                        {/* NIVEL DE PROBABILIDAD */}
-                        <div className="lg:col-span-4 space-y-4 lg:border-l lg:border-gray-100 dark:lg:border-gray-700 lg:pl-8">
-                            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Nivel de Probabilidad</p>
-                            <div className="flex flex-wrap gap-2">
-                                {["Improbable", "Poco Probable", "Posible", "Probable", "Muy Probable"].map((label, i) => {
-                                    const val = i + 1;
-                                    const isActive = probFilter.includes(val);
-                                    return (
-                                        <button
-                                            key={i}
-                                            onClick={() => setProbFilter(prev => prev.includes(val) ? prev.filter(v => v !== val) : [...prev, val])}
-                                            className={cn(
-                                                "px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all duration-300 border",
-                                                isActive
-                                                    ? "bg-blue-500 text-white border-blue-500 shadow-lg shadow-blue-500/20 scale-105"
-                                                    : "bg-blue-50/50 text-blue-600 border-blue-100 hover:border-blue-300 dark:bg-blue-900/10 dark:border-blue-900/30 dark:text-blue-400"
-                                            )}
-                                        >
-                                            {label}
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        </div>
-
-                        {/* DEPENDENCIAS */}
-                        <div className="lg:col-span-5 space-y-4 lg:border-l lg:border-gray-100 dark:lg:border-gray-700 lg:pl-8">
-                            <div className="flex justify-between items-center">
-                                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Dependencias</p>
-                                <div className="flex gap-3">
-                                    {auth.isSuper && (
-                                        <button 
-                                            onClick={() => setSelectedPoints(points.map(p => p.id))}
-                                            className="text-[10px] font-black text-blue-500 hover:text-blue-600 uppercase tracking-tighter transition-colors"
-                                        >
-                                            Todas
-                                        </button>
-                                    )}
-                                    <button 
-                                        onClick={() => setSelectedPoints([])}
-                                        className="text-[10px] font-black text-gray-400 hover:text-gray-600 uppercase tracking-tighter transition-colors"
-                                    >
-                                        Ninguna
-                                    </button>
+                {/* 2. Sección Unificada: Configuración + Matriz */}
+                <div className="bg-white dark:bg-gray-800 rounded-[32px] shadow-xl border border-gray-100 dark:border-gray-700 mb-8 overflow-hidden">
+                    {/* Cabecera de Configuración */}
+                    <div className="p-6 border-b border-gray-50 dark:border-gray-900">
+                        <div className="flex flex-col md:flex-row items-center justify-between gap-6 mb-6">
+                            <div className="flex items-center gap-2">
+                                <div className="p-2 bg-blue-500/10 rounded-xl text-blue-500">
+                                    <LayoutDashboard className="w-5 h-5" />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-black uppercase tracking-widest text-gray-900 dark:text-gray-100">Configuración de Matriz</h3>
+                                    <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tight">Cambie la perspectiva del análisis</p>
                                 </div>
                             </div>
-                            <div className="h-32 overflow-y-auto pr-2 custom-scrollbar">
-                                <div className="flex flex-wrap gap-2">
-                                    {points.map((p) => (
+
+                            <div className="flex flex-wrap items-center gap-3">
+                                {/* Selector de Modo */}
+                                <div className="flex p-1 bg-gray-100 dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700">
+                                    {[
+                                        { id: "deps", label: "Dependencias", icon: List },
+                                        { id: "inherent", label: "Riesgos Inherentes", icon: AlertTriangle },
+                                        { id: "residual", label: "Riesgos Residuales", icon: Zap }
+                                    ].map((m) => (
                                         <button
-                                            key={p.id}
-                                            onClick={() => auth.isSuper && setSelectedPoints(prev => prev.includes(p.id) ? prev.filter(id => id !== p.id) : [...prev, p.id])}
+                                            key={m.id}
+                                            onClick={() => setMatrixMode(m.id as any)}
                                             className={cn(
-                                                "px-3 py-1.5 rounded-lg text-[9px] font-bold transition-all duration-200 border uppercase tracking-tight",
-                                                selectedPoints.includes(p.id)
-                                                    ? "bg-gray-900 text-white border-gray-900 dark:bg-gray-100 dark:border-gray-100 dark:text-gray-900"
-                                                    : "bg-white text-gray-600 border-gray-200 hover:border-gray-400 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700",
-                                                !auth.isSuper && "cursor-default"
+                                                "flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-tighter transition-all",
+                                                matrixMode === m.id 
+                                                    ? "bg-white dark:bg-gray-800 text-blue-500 shadow-sm border border-gray-100 dark:border-gray-700" 
+                                                    : "text-gray-400 hover:text-gray-600"
                                             )}
                                         >
-                                            {p.name}
+                                            <m.icon className="w-3 h-3" />
+                                            {m.label}
                                         </button>
                                     ))}
                                 </div>
+
+                                {/* Filtro de Dependencia (Solo para modos de Riesgos e Inherente) */}
+                                {matrixMode !== "deps" && (
+                                    <div className="animate-in fade-in zoom-in-95 duration-300">
+                                        <select
+                                            disabled={!auth.isSuper}
+                                            value={matrixDepId}
+                                            onChange={(e) => setMatrixDepId(e.target.value)}
+                                            className="px-4 py-2 bg-gray-100 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl text-[10px] font-black uppercase tracking-tighter outline-none focus:ring-2 focus:ring-blue-500 transition-all appearance-none pr-8 relative disabled:opacity-60"
+                                            style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' fill=\'none\' viewBox=\'0 0 24 24\' stroke=\'currentColor\'%3E%3Cpath stroke-linecap=\'round\' stroke-linejoin=\'round\' stroke-width=\'2\' d=\'org/19/9\' /%3E%3C/svg%3E")' }}
+                                        >
+                                            {allDependencies.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                                        </select>
+                                    </div>
+                                )}
                             </div>
                         </div>
+
+                        {/* Consola de Filtrado (Solo visible en modo Dependencias) */}
+                        {matrixMode === "deps" && (
+                            <div className="pt-6 border-t border-gray-100 dark:border-gray-700 animate-in fade-in slide-in-from-top-4 duration-500">
+                                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                                    {/* NIVEL DE IMPACTO */}
+                                    <div className="lg:col-span-3 space-y-4">
+                                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Nivel de Impacto</p>
+                                        <div className="flex flex-wrap gap-2">
+                                            {["Muy Bajo", "Bajo", "Medio", "Alto", "Muy Alto"].map((label, i) => {
+                                                const val = i + 1;
+                                                const isActive = impactFilter.includes(val);
+                                                return (
+                                                    <button
+                                                        key={i}
+                                                        onClick={() => setImpactFilter(prev => prev.includes(val) ? prev.filter(v => v !== val) : [...prev, val])}
+                                                        className={cn(
+                                                            "px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all duration-300 border",
+                                                            isActive
+                                                                ? "bg-amber-500 text-white border-amber-500 shadow-lg shadow-amber-500/20 scale-105"
+                                                                : "bg-amber-50/50 text-amber-600 border-amber-100 hover:border-amber-300 dark:bg-amber-900/10 dark:border-amber-900/30 dark:text-amber-400"
+                                                        )}
+                                                    >
+                                                        {label}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+
+                                    {/* NIVEL DE PROBABILIDAD */}
+                                    <div className="lg:col-span-4 space-y-4 lg:border-l lg:border-gray-100 dark:lg:border-gray-700 lg:pl-8">
+                                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Nivel de Probabilidad</p>
+                                        <div className="flex flex-wrap gap-2">
+                                            {["Improbable", "Poco Probable", "Posible", "Probable", "Muy Probable"].map((label, i) => {
+                                                const val = i + 1;
+                                                const isActive = probFilter.includes(val);
+                                                return (
+                                                    <button
+                                                        key={i}
+                                                        onClick={() => setProbFilter(prev => prev.includes(val) ? prev.filter(v => v !== val) : [...prev, val])}
+                                                        className={cn(
+                                                            "px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all duration-300 border",
+                                                            isActive
+                                                                ? "bg-blue-500 text-white border-blue-500 shadow-lg shadow-blue-500/20 scale-105"
+                                                                : "bg-blue-50/50 text-blue-600 border-blue-100 hover:border-blue-300 dark:bg-blue-900/10 dark:border-blue-900/30 dark:text-blue-400"
+                                                        )}
+                                                    >
+                                                        {label}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+
+                                    {/* DEPENDENCIAS */}
+                                    <div className="lg:col-span-5 space-y-4 lg:border-l lg:border-gray-100 dark:lg:border-gray-700 lg:pl-8">
+                                        <div className="flex justify-between items-center">
+                                            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Dependencias</p>
+                                            <div className="flex gap-3">
+                                                {auth.isSuper && (
+                                                    <button 
+                                                        onClick={() => setSelectedPoints(points.map(p => p.id))}
+                                                        className="text-[10px] font-black text-blue-500 hover:text-blue-600 uppercase tracking-tighter transition-colors"
+                                                    >
+                                                        Todas
+                                                    </button>
+                                                )}
+                                                <button 
+                                                    onClick={() => setSelectedPoints([])}
+                                                    className="text-[10px] font-black text-gray-400 hover:text-gray-600 uppercase tracking-tighter transition-colors"
+                                                >
+                                                    Ninguna
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div className="h-32 overflow-y-auto pr-2 custom-scrollbar">
+                                            <div className="flex flex-wrap gap-2">
+                                                {points.map((p) => (
+                                                    <button
+                                                        key={p.id}
+                                                        onClick={() => auth.isSuper && setSelectedPoints(prev => prev.includes(p.id) ? prev.filter(id => id !== p.id) : [...prev, p.id])}
+                                                        className={cn(
+                                                            "px-3 py-1.5 rounded-lg text-[9px] font-bold transition-all duration-200 border uppercase tracking-tight",
+                                                            selectedPoints.includes(p.id)
+                                                                ? "bg-gray-900 text-white border-gray-900 dark:bg-gray-100 dark:border-gray-100 dark:text-gray-900"
+                                                                : "bg-white text-gray-600 border-gray-200 hover:border-gray-400 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700",
+                                                            !auth.isSuper && "cursor-default"
+                                                        )}
+                                                    >
+                                                        {p.name}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Matriz de Riesgo */}
+                    <div className="p-8 bg-gray-50/50 dark:bg-gray-900/20">
+                        <RiskMatrixScatter
+                            key={`${matrixMode}-${matrixDepId}-${points.map(p => p.id).join('-')}`} // Forzar re-render si cambian los puntos
+                            title={
+                                matrixMode === "deps" ? "Matriz de Riesgos por Dependencia" :
+                                matrixMode === "inherent" ? `Riesgos Inherentes: ${allDependencies.find(d => d.id === matrixDepId)?.name || ""}` :
+                                `Riesgos Residuales: ${allDependencies.find(d => d.id === matrixDepId)?.name || ""}`
+                            }
+                            points={
+                                matrixMode === "deps" 
+                                    ? points.filter(p => 
+                                        selectedPoints.includes(p.id) && 
+                                        impactFilter.includes(Math.round(p.x)) && 
+                                        probFilter.includes(Math.round(p.y))
+                                    )
+                                    : individualRisks
+                                        .filter(r => r.dependence_id === matrixDepId)
+                                        .reduce((acc: RiskPoint[], r) => {
+                                            const existing = acc.find(a => a.id === r.id);
+                                            const config = EFFICACY_MAP[r.control_type] || { eff: 0.1, nature: "Preventivo" };
+
+                                            if (existing) {
+                                                if (matrixMode === "residual") {
+                                                    if (config.nature === "Preventivo") {
+                                                        (existing as any).maxProbEff = Math.max((existing as any).maxProbEff || 0, config.eff);
+                                                    } else {
+                                                        (existing as any).maxImpEff = Math.max((existing as any).maxImpEff || 0, config.eff);
+                                                    }
+                                                    existing.x = Math.max(1, Math.min(5, r.impact * (1 - ((existing as any).maxImpEff || 0))));
+                                                    existing.y = Math.max(1, Math.min(5, r.probability * (1 - ((existing as any).maxProbEff || 0))));
+                                                }
+                                                return acc;
+                                            }
+
+                                            const probEff = matrixMode === "residual" && config.nature === "Preventivo" ? config.eff : 0;
+                                            const impEff = matrixMode === "residual" && config.nature === "Detectivo" ? config.eff : 0;
+
+                                            const p: RiskPoint = {
+                                                id: r.id.toString(),
+                                                name: r.name,
+                                                x: matrixMode === "residual" ? Math.max(1, Math.min(5, r.impact * (1 - impEff))) : r.impact,
+                                                y: matrixMode === "residual" ? Math.max(1, Math.min(5, r.probability * (1 - probEff))) : r.probability
+                                            };
+                                            (p as any).maxProbEff = probEff;
+                                            (p as any).maxImpEff = impEff;
+                                            acc.push(p);
+                                            return acc;
+                                        }, [])
+                            }
+                        />
                     </div>
                 </div>
 
-                {/* 3. Matriz de Riesgo - FULL WIDTH */}
-                <div className="mb-10 w-full">
-                    <RiskMatrixScatter
-                        key={points.map(p => p.id).join('-')} // Forzar re-render si cambian los puntos (limpieza de tooltips)
-                        title={data.riskMatrix.title}
-                        points={points.filter(p => 
-                            selectedPoints.includes(p.id) && 
-                            impactFilter.includes(Math.round(p.x)) && 
-                            probFilter.includes(Math.round(p.y))
-                        )}
-                    />
-                </div>
+
+
 
                 {/* 4. Gráficas Principales */}
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 mb-8">

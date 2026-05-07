@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { LayoutDashboard, List, AlertTriangle, Zap, Activity } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import KpiCard from "./dashboard/KpiCard";
 import ChartCard from "./dashboard/ChartCard";
@@ -73,17 +74,33 @@ export default function ReporteriaSegmentadaClient() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [riskDetailsRows, setRiskDetailsRows] = useState<any[]>([]);
+    const [matrixMode, setMatrixMode] = useState<"deps" | "inherent" | "residual">("deps");
+    const [matrixDepId, setMatrixDepId] = useState<string>("");
+    const [individualRisks, setIndividualRisks] = useState<any[]>([]);
+    const [allDependencies, setAllDependencies] = useState<any[]>([]);
 
     // Seguridad por Rol
     const auth = useMemo(() => {
         const rawRole = (searchParams.get("role_id") || "USER").toString().toUpperCase();
         const depId = searchParams.get("dependence_id") || "";
         
+        const isSuper = rawRole === "1" || rawRole === "SUPER";
+
         return {
-            isSuper: rawRole === "1" || rawRole === "SUPER",
+            isSuper,
             dependenceId: depId
         };
     }, [searchParams]);
+
+    const EFFICACY_MAP: Record<string, { eff: number, nature: "Preventivo" | "Detectivo" }> = {
+        "Verificación Automática en Listas Restrictivas": { eff: 0.85, nature: "Preventivo" },
+        "Monitoreo Transaccional Automatizado": { eff: 0.85, nature: "Detectivo" },
+        "Debida Diligencia Intensificada (Manual)": { eff: 0.65, nature: "Preventivo" },
+        "Reporte de Operaciones Sospechosas (ROS)": { eff: 0.75, nature: "Detectivo" },
+        "Capacitación y Concienciación Periódica": { eff: 0.40, nature: "Preventivo" },
+        "Conciliación de Saldos Mensual": { eff: 0.55, nature: "Detectivo" },
+        "Auditoría Interna de Procesos": { eff: 0.70, nature: "Detectivo" },
+    };
 
     useEffect(() => {
         async function fetchData() {
@@ -101,6 +118,30 @@ export default function ReporteriaSegmentadaClient() {
                 const whereClause = getWhereClause();
                 const whereClauseCt = getWhereClause("ct");
                 const matrixFilter = auth.isSuper ? '1=1' : `dt.id = '${auth.dependenceId}'`;
+
+                // Fetch dependencies for dropdown
+                const depsRes = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`SELECT id, name FROM dependence_tbl ORDER BY name ASC`));
+                const depsD = await depsRes.json();
+                setAllDependencies(Array.isArray(depsD) ? depsD : []);
+
+                // Default selected dep for SUPER
+                if (auth.isSuper && !matrixDepId && Array.isArray(depsD)) {
+                    const adminSys = depsD.find(d => d.name.toLowerCase().includes("administración sistema") || d.name.toLowerCase().includes("administracion sistema"));
+                    if (adminSys) setMatrixDepId(adminSys.id);
+                    else if (depsD.length > 0) setMatrixDepId(depsD[0].id);
+                } else if (!auth.isSuper && auth.dependenceId) {
+                    setMatrixDepId(auth.dependenceId);
+                }
+
+                // Fetch Individual Risks for modes 2 & 3
+                const indRisksRes = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
+                    SELECT rdt.id, rdt.name, rdt.impact, rdt.probability, rat.dependence_id, rat.type as control_type, rat.description as action_desc
+                    FROM riesgos_judiciales_db.risk_data_tbl rdt
+                    INNER JOIN riesgos_judiciales_db.risk_action_tbl rat ON rat.risk_id = rdt.id
+                    WHERE rat.dependence_id IS NOT NULL
+                `));
+                const indRisksD = await indRisksRes.json();
+                setIndividualRisks(Array.isArray(indRisksD) ? indRisksD : []);
 
                 // Fetching de todo el dashboard segmentado
                 const [kpiRes, bar1Res, bar2Res, lineRes, pieRes, matrixRes, tableRes, detailsRes] = await Promise.all([
@@ -207,7 +248,7 @@ export default function ReporteriaSegmentadaClient() {
                             Reportería por Dependencia
                         </h2>
                         <a 
-                            href="/config" 
+                            href={`/dashboard/risk-config?${searchParams.toString()}`} 
                             className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl text-xs font-black uppercase tracking-tighter hover:bg-gray-50 dark:hover:bg-gray-700 transition-all shadow-sm"
                         >
                             <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
@@ -222,14 +263,111 @@ export default function ReporteriaSegmentadaClient() {
                     {data.kpis.map((kpi, idx) => <KpiCard key={idx} {...kpi} />)}
                 </div>
 
-                {/* 2. Matriz de Riesgo - FULL WIDTH */}
-                <div className="mb-10 w-full">
-                    <RiskMatrixScatter
-                        key={data.riskMatrix.points.map(p => p.id).join('-')}
-                        title={data.riskMatrix.title}
-                        points={data.riskMatrix.points}
-                    />
+                {/* 2. Sección Unificada: Configuración + Matriz */}
+                <div className="bg-white dark:bg-gray-800 rounded-[32px] shadow-xl border border-gray-100 dark:border-gray-700 mb-8 overflow-hidden">
+                    {/* Cabecera de Configuración */}
+                    <div className="p-6 border-b border-gray-50 dark:border-gray-900">
+                        <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+                            <div className="flex items-center gap-2">
+                                <div className="p-2 bg-blue-500/10 rounded-xl text-blue-500">
+                                    <Activity className="w-5 h-5" />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-black uppercase tracking-widest text-gray-900 dark:text-gray-100">Configuración de Matriz</h3>
+                                    <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tight">Cambie la perspectiva del análisis</p>
+                                </div>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-3">
+                                <div className="flex p-1 bg-gray-100 dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700">
+                                    {[
+                                        { id: "deps", label: "Dependencias", icon: List },
+                                        { id: "inherent", label: "Riesgos Inherentes", icon: AlertTriangle },
+                                        { id: "residual", label: "Riesgos Residuales", icon: Zap }
+                                    ].map((m) => (
+                                        <button
+                                            key={m.id}
+                                            onClick={() => setMatrixMode(m.id as any)}
+                                            className={cn(
+                                                "flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-tighter transition-all",
+                                                matrixMode === m.id 
+                                                    ? "bg-white dark:bg-gray-800 text-blue-500 shadow-sm border border-gray-100 dark:border-gray-700" 
+                                                    : "text-gray-400 hover:text-gray-600"
+                                            )}
+                                        >
+                                            <m.icon className="w-3 h-3" />
+                                            {m.label}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                {matrixMode !== "deps" && (
+                                    <div className="animate-in fade-in zoom-in-95 duration-300">
+                                        <select
+                                            disabled={!auth.isSuper}
+                                            value={matrixDepId}
+                                            onChange={(e) => setMatrixDepId(e.target.value)}
+                                            className="px-4 py-2 bg-gray-100 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl text-[10px] font-black uppercase tracking-tighter outline-none focus:ring-2 focus:ring-blue-500 transition-all appearance-none pr-8 relative disabled:opacity-60"
+                                        >
+                                            {allDependencies.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                                        </select>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Matriz de Riesgo */}
+                    <div className="p-8 bg-gray-50/50 dark:bg-gray-900/20">
+                        <RiskMatrixScatter
+                            key={`${matrixMode}-${matrixDepId}-${data.riskMatrix.points.map(p => p.id).join('-')}`} 
+                            title={
+                                matrixMode === "deps" ? "POSICIONAMIENTO DE RIESGO DE LA DEPENDENCIA" :
+                                matrixMode === "inherent" ? `Riesgos Inherentes: ${allDependencies.find(d => d.id === matrixDepId)?.name || ""}` :
+                                `Riesgos Residuales: ${allDependencies.find(d => d.id === matrixDepId)?.name || ""}`
+                            }
+                            points={
+                                matrixMode === "deps" 
+                                    ? data.riskMatrix.points
+                                    : individualRisks
+                                        .filter(r => r.dependence_id === matrixDepId)
+                                        .reduce((acc: RiskPoint[], r) => {
+                                            const existing = acc.find(a => a.id === r.id);
+                                            const config = EFFICACY_MAP[r.control_type] || { eff: 0.1, nature: "Preventivo" };
+
+                                            if (existing) {
+                                                if (matrixMode === "residual") {
+                                                    if (config.nature === "Preventivo") {
+                                                        (existing as any).maxProbEff = Math.max((existing as any).maxProbEff || 0, config.eff);
+                                                    } else {
+                                                        (existing as any).maxImpEff = Math.max((existing as any).maxImpEff || 0, config.eff);
+                                                    }
+                                                    existing.x = Math.max(1, Math.min(5, r.impact * (1 - ((existing as any).maxImpEff || 0))));
+                                                    existing.y = Math.max(1, Math.min(5, r.probability * (1 - ((existing as any).maxProbEff || 0))));
+                                                }
+                                                return acc;
+                                            }
+
+                                            const probEff = matrixMode === "residual" && config.nature === "Preventivo" ? config.eff : 0;
+                                            const impEff = matrixMode === "residual" && config.nature === "Detectivo" ? config.eff : 0;
+
+                                            const p: RiskPoint = {
+                                                id: r.id.toString(),
+                                                name: r.name,
+                                                x: matrixMode === "residual" ? Math.max(1, Math.min(5, r.impact * (1 - impEff))) : r.impact,
+                                                y: matrixMode === "residual" ? Math.max(1, Math.min(5, r.probability * (1 - probEff))) : r.probability
+                                            };
+                                            (p as any).maxProbEff = probEff;
+                                            (p as any).maxImpEff = impEff;
+                                            acc.push(p);
+                                            return acc;
+                                        }, [])
+                            }
+                        />
+                    </div>
                 </div>
+
+
 
                 {/* 3. Gráficas Principales */}
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 mb-8">
