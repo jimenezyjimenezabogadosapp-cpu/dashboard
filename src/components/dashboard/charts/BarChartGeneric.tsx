@@ -24,12 +24,15 @@ export default function BarChartGeneric({
 }: BarChartGenericProps) {
     return (
         <ResponsiveContainer width="100%" height={height}>
-            <BarChart data={data} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+            <BarChart data={data} margin={{ top: 5, right: 20, left: 20, bottom: 80 }}>
                 <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
                 <XAxis
                     dataKey={xKey}
-                    tick={{ fill: "#6b7280", fontSize: 12 }}
+                    tick={{ fill: "#6b7280", fontSize: 11 }}
                     tickLine={{ stroke: "#9ca3af" }}
+                    angle={-35}
+                    textAnchor="end"
+                    interval={0}
                 />
                 <YAxis
                     tick={{ fill: "#6b7280", fontSize: 12 }}
@@ -55,6 +58,7 @@ export default function BarChartGeneric({
                         name={s.label}
                         fill={s.color ?? "#8884d8"}
                         radius={[4, 4, 0, 0]}
+                        stackId={series.length > 1 ? "stack" : undefined}
                     />
                 ))}
             </BarChart>

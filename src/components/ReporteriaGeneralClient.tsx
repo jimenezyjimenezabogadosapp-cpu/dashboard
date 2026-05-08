@@ -13,6 +13,35 @@ import TableGeneric from "./dashboard/TableGeneric";
 import RiskMatrixScatter from "./dashboard/RiskMatrixScatter";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "./theme-toggle";
+import * as htmlToImage from "html-to-image";
+
+const dimensionExprMap: Record<string, { label: string; expr: string; filter: string }> = {
+    "client_type": {
+        label: "Tipo Cliente",
+        expr: `CASE WHEN LOWER(TRIM(c.client_type)) IN ('juridica','juridico') THEN 'Persona Jurídica' WHEN LOWER(TRIM(c.client_type)) = 'natural' THEN 'Persona Natural' ELSE TRIM(c.client_type) END`,
+        filter: "AND c.client_type IS NOT NULL AND TRIM(c.client_type) != ''"
+    },
+    "register_client_type": {
+        label: "Relación",
+        expr: `CASE WHEN TRIM(c.register_client_type) IN ('Colaborador Laboral','COLABORADOR LABORAL','Colaborador - Contrato Laboral','colaborador - contrato laboral') THEN 'Colaborador Laboral' WHEN TRIM(c.register_client_type) IN ('Colaborador Servicios','COLABORADOR SERVICIOS','Colaborador - Contrato de Prestacion de Servicios','Colaborador - Prestacion de Servicios','colaborador - contrato de prestacion de servicios','colaborador - prestacion de servicios') THEN 'Colaborador Servicios' ELSE TRIM(c.register_client_type) END`,
+        filter: "AND c.register_client_type IS NOT NULL AND TRIM(c.register_client_type) != ''"
+    },
+    "channel": {
+        label: "Canal",
+        expr: "TRIM(c.channel)",
+        filter: "AND c.channel IS NOT NULL AND TRIM(c.channel) != '' AND TRIM(c.channel) IN ('Intermediario/Tercero','Correo/Chat','Web/App','Telefónico','Asesor Externo','Presencial','Telefonico')"
+    },
+    "product": {
+        label: "Producto",
+        expr: "TRIM(c.product)",
+        filter: "AND c.product IS NOT NULL AND TRIM(c.product) != '' AND c.product NOT REGEXP '^[0-9][0-9]-'"
+    },
+    "complex_jurisdictions": {
+        label: "Jurisdicción",
+        expr: `CASE WHEN ci.name IS NOT NULL THEN CONCAT(p.name, ' - ', ci.name) ELSE COALESCE(p.name, 'Sin Datos') END`,
+        filter: "AND (p.name IS NOT NULL OR c.country_id IS NOT NULL)"
+    }
+};
 
 interface KpiData {
     label: string;
@@ -91,8 +120,31 @@ export default function ReporteriaGeneralClient() {
     const [activeTab, setActiveTab] = useState<"operacion" | "desempeño">("operacion");
     const [adminTechData, setAdminTechData] = useState<any>(null);
     const [adminPerformanceRows, setAdminPerformanceRows] = useState<any[]>([]);
+    const [viewType, setViewType] = useState<"consultas" | "clientes">("consultas");
+    const [dimension, setDimension] = useState<string>("client_type");
+    const [segmentationData, setSegmentationData] = useState<Record<string, any[]>>({});
+    const [alertLevelData, setAlertLevelData] = useState<Record<string, any[]>>({});
+    const [datePeriod, setDatePeriod] = useState<"total" | "monthly" | "quarterly" | "semiannual">("total");
+    const [dateFrom, setDateFrom] = useState<string>(""); // YYYY-MM-DD
+    const [dateTo, setDateTo] = useState<string>(""); // YYYY-MM-DD
+    const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
 
     const isFirstRender = useRef(true);
+    const [segLoading, setSegLoading] = useState(false);
+
+    // Guardar y restaurar posición de scroll al recargar
+    useEffect(() => {
+        const savedScroll = sessionStorage.getItem('reporteria_scroll');
+        if (savedScroll) {
+            setTimeout(() => window.scrollTo({ top: parseInt(savedScroll), behavior: 'instant' }), 100);
+            sessionStorage.removeItem('reporteria_scroll');
+        }
+        const handleBeforeUnload = () => {
+            sessionStorage.setItem('reporteria_scroll', window.scrollY.toString());
+        };
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+    }, []);
 
     const auth = useMemo(() => {
         const rawRole = (searchParams.get("role_id") || "USER").toString().toUpperCase();
@@ -130,6 +182,21 @@ export default function ReporteriaGeneralClient() {
                 setLoading(true);
                 const userKey = "019bdbff-d27c-7583-b76f-80edd5ae064e";
 
+                const getDateFilter = (tableAlias: string = "c") => {
+                    const prefix = tableAlias ? `${tableAlias}.` : "";
+                    const dateCol = `${prefix}created`;
+                    let conditions = [];
+                    
+                    if (dateFrom) conditions.push(`${dateCol} >= '${dateFrom}'`);
+                    if (dateTo) conditions.push(`${dateCol} <= '${dateTo} 23:59:59'`);
+
+                    if (conditions.length > 0) {
+                        return `AND ${conditions.join(' AND ')}`;
+                    }
+                    
+                    return ""; // Removed datePeriod filtering to use it exclusively for grouping
+                };
+
                 const getWhereClause = (tableAlias: string = "") => {
                     const prefix = tableAlias ? `${tableAlias}.` : "";
                     let conditions = [];
@@ -140,11 +207,25 @@ export default function ReporteriaGeneralClient() {
                     }
                     if (auth.isUser) conditions.push(`${prefix}users_id = '${auth.userId}'`);
                     else if (globalUserId && globalUserId !== "ALL") conditions.push(`${prefix}users_id = '${globalUserId}'`);
+                    // Siempre inyectar filtro de fecha (sin AND porque getDateFilter ya lo lleva)
+                    const dateF = getDateFilter(tableAlias || "").replace(/^AND /, "");
+                    if (dateF) conditions.push(dateF);
                     return conditions.length > 0 ? conditions.join(" AND ") : "1=1";
                 };
 
                 const whereClause = getWhereClause();
                 const whereClauseCt = getWhereClause("ct");
+                const whereClauseC = getWhereClause("c");
+
+                const getTimeSelect = (col: string) => {
+                    switch (datePeriod) {
+                        case "monthly":    return `DATE_FORMAT(${col}, '%Y-%m')`;
+                        case "quarterly":  return `CONCAT(YEAR(${col}), '-Q', QUARTER(${col}))`;
+                        case "semiannual": return `CONCAT(YEAR(${col}), '-S', CEILING(MONTH(${col})/6))`;
+                        default:           return `DATE_FORMAT(${col}, '%Y')`;
+                    }
+                };
+                const timeExpr = getTimeSelect('c.created');
                 
                 // La matriz en perspectiva SUPER siempre debe mostrar todas las dependencias para permitir comparación
                 const matrixFilter = (viewRole === "SUPER") ? '1=1' : `dt.id = '${globalDepId || auth.dependenceId}'`;
@@ -193,12 +274,19 @@ export default function ReporteriaGeneralClient() {
                 const indRisksD = await indRisksRes.json();
                 setIndividualRisks(Array.isArray(indRisksD) ? indRisksD : []);
 
-                // --- QUERIES ADAPTADAS A LA PERSPECTIVA (viewRole) ---
+                const countExpr = viewType === "consultas" ? "COUNT(*)" : "COUNT(DISTINCT id_number)";
                 let kpiQuery = "";
                 let bar1Query = "";
                 let bar2Query = "";
                 let lineQuery = "";
                 let pieQuery = "";
+
+                // Lógica de filtrado por dependencia compartida
+                const depId = (viewRole === "SUPER" && (globalDepId === "ALL" || globalDepId === "SYS_ADMIN")) 
+                    ? "" 
+                    : (globalDepId === "ALL" ? "" : (globalDepId || auth.dependenceId));
+                const depFilter = depId ? `WHERE c.dependence_id = '${depId}'` : "";
+                const depFilterJoin = depId ? `AND c.dependence_id = '${depId}'` : "";
 
                 if (viewRole === "SUPER" && globalDepId === "SYS_ADMIN") {
                     // PERSPECTIVA SUPER - ADMINISTRADOR DE SISTEMAS (SALUD TÉCNICA)
@@ -216,10 +304,6 @@ export default function ReporteriaGeneralClient() {
                     pieQuery = `SELECT 'Exitosas' as label, 98 as value UNION ALL SELECT 'Fallidas' as label, 2 as value`;
                 } else if (viewRole === "SUPER" || viewRole === "ADMIN") {
                     // PERSPECTIVA SUPER (GENERAL) O ADMIN (DEPENDENCIA)
-                    const depId = globalDepId === "ALL" || globalDepId === "SYS_ADMIN" ? "" : (globalDepId || auth.dependenceId);
-                    const depFilter = depId ? `WHERE c.dependence_id = '${depId}'` : "";
-                    const depFilterJoin = depId ? `AND c.dependence_id = '${depId}'` : "";
-
                     const targetUserId = globalUserId;
 
                     if (targetUserId) {
@@ -233,41 +317,77 @@ export default function ReporteriaGeneralClient() {
                     } else {
                         kpiQuery = `
                             SELECT 
-                                ROUND((SELECT COUNT(*) FROM client_tbl c ${depFilter}), 0) as total_consultas,
-                                ROUND((SELECT COUNT(*) FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id WHERE a.level = '1' ${depFilterJoin}), 0) as alertas_criticas,
-                                ROUND((SELECT COUNT(DISTINCT users_id) FROM client_tbl c ${depFilter}), 0) as analistas_activos,
-                                ROUND((SELECT AVG(execution_time) FROM client_tbl c ${depFilter}), 1) as tiempo_promedio_caso
+                                ROUND((SELECT COUNT(*) FROM client_tbl c WHERE ${whereClauseC}), 0) as total_consultas,
+                                ROUND((SELECT COUNT(*) FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id WHERE a.level = '1' AND ${whereClauseC}), 0) as alertas_criticas,
+                                ROUND((SELECT COUNT(DISTINCT c.users_id) FROM client_tbl c WHERE ${whereClauseC}), 0) as analistas_activos,
+                                ROUND((SELECT AVG(execution_time) FROM client_tbl c WHERE ${whereClauseC}), 1) as tiempo_promedio_caso
                         `;
                     }
                     bar1Query = `
-                        SELECT COALESCE(u.email, c.users_id, 'Anonimo') as label, ROUND(COUNT(*), 0) as value 
+                        SELECT 
+                            COALESCE(SUBSTRING_INDEX(u.email, '@', 1), c.users_id, 'Anónimo') as label, 
+                            ROUND(${countExpr}, 0) as value 
                         FROM client_tbl c 
                         LEFT JOIN users_app_tbl u ON c.users_id = u.id 
-                        ${depId ? `WHERE c.dependence_id = '${depId}'` : "WHERE 1=1"}
-                        AND c.users_id IS NOT NULL
+                        WHERE ${whereClauseC} AND c.users_id IS NOT NULL
                         GROUP BY label 
                         ORDER BY value DESC 
                         LIMIT 10
                     `;
                     bar2Query = `
-                        SELECT a.type as label, ROUND(COUNT(*), 0) as value 
+                        SELECT 
+                            CASE a.type
+                                WHEN 'rut' THEN 'Registro Mercantil (RUES)'
+                                WHEN 'libreta_militar' THEN 'Libreta Militar'
+                                WHEN 'rnmc' THEN 'Medidas Cautelares'
+                                WHEN 'procesos_rama_judicial' THEN 'Rama Judicial'
+                                WHEN 'procesos_rama_judicial_1' THEN 'Rama Judicial'
+                                WHEN 'portal_anticorrupcion' THEN 'Portal Anticorrupción'
+                                WHEN 'dilisense' THEN 'Dilisense'
+                                WHEN 'ofac' THEN 'Lista OFAC'
+                                WHEN 'onu' THEN 'Lista ONU'
+                                WHEN 'world_bank' THEN 'Banco Mundial'
+                                WHEN 'interpol' THEN 'Interpol'
+                                WHEN 'europol' THEN 'Europol'
+                                WHEN 'sisconmp' THEN 'SISCONMP'
+                                WHEN 'sirna_abogado' THEN 'SIRNA Abogados'
+                                WHEN 'sirna_juez_de_paz' THEN 'SIRNA Jueces de Paz'
+                                WHEN 'sirna_licencia_temporal' THEN 'SIRNA Licencias'
+                                WHEN 'sirna_inscripcion' THEN 'SIRNA Inscripciones'
+                                WHEN 'personas_politicamente_expuestas' THEN 'PEP'
+                                WHEN 'rues_registro_mercantil' THEN 'RUES Registro Mercantil'
+                                WHEN 'rues_registro_mercantil_1' THEN 'RUES Registro Mercantil'
+                                WHEN 'rues_entidades_extranjeras_1' THEN 'RUES Entidades Extranjeras'
+                                WHEN 'rues_entidades_sin_animo_de_lucro' THEN 'RUES Entidades s/Ánimo Lucro'
+                                WHEN 'rues_proponentes' THEN 'RUES Proponentes'
+                                WHEN 'dian_proveedores_ficticios' THEN 'DIAN Proveedores Ficticios'
+                                WHEN 'duck_duck_go' THEN 'Búsqueda Web'
+                                WHEN 'policia_antecendetes' THEN 'Policía Antecedentes'
+                                WHEN 'canadian_sanctions' THEN 'Sanciones Canadá'
+                                WHEN 'terrorist' THEN 'Lista Terroristas'
+                                WHEN 'jcc_contadores' THEN 'JCC Contadores'
+                                WHEN 'sancionados_superfinanciera' THEN 'Superfinanciera'
+                                WHEN 'sigepii' THEN 'SIGEP II Serv. Públicos'
+                                WHEN 'procesos_unificados' THEN 'Procesos Judiciales'
+                                ELSE a.type
+                            END as label,
+                            ROUND(${countExpr}, 0) as value 
                         FROM alert_tbl a 
                         INNER JOIN client_tbl c ON c.id = a.client_id 
-                        ${depId ? `WHERE c.dependence_id = '${depId}'` : ""}
-                        GROUP BY label 
+                        WHERE ${whereClauseC}
+                        GROUP BY a.type
                         ORDER BY value DESC 
-                        LIMIT 5
+                        LIMIT 8
                     `;
                     lineQuery = `
                         SELECT 
-                            DATE_FORMAT(c.created, '%Y-%m-%d') as time_label, 
+                            ${timeExpr} as time_label, 
                             COALESCE(u.email, c.users_id, 'Anonimo') as email, 
-                            COUNT(*) as value 
+                            ${countExpr} as value 
                         FROM client_tbl c 
                         LEFT JOIN users_app_tbl u ON c.users_id = u.id
-                        ${depId ? `WHERE c.dependence_id = '${depId}'` : "WHERE 1=1"} 
-                        AND c.created >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH) 
-                        GROUP BY DATE_FORMAT(c.created, '%Y-%m-%d'), COALESCE(u.email, c.users_id, 'Anonimo')
+                        WHERE ${whereClauseC} 
+                        GROUP BY ${timeExpr}, COALESCE(u.email, c.users_id, 'Anonimo')
                         ORDER BY time_label ASC
                     `;
                     pieQuery = `
@@ -278,9 +398,8 @@ export default function ReporteriaGeneralClient() {
                                 ELSE 'Bajo' 
                             END as label, 
                             ROUND(COUNT(*), 0) as value 
-                        FROM alert_tbl a 
-                        INNER JOIN client_tbl c ON c.id = a.client_id 
-                        ${depId ? `WHERE c.dependence_id = '${depId}'` : ""}
+                        FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id 
+                        WHERE ${whereClauseC}
                         GROUP BY label 
                         ORDER BY CASE label WHEN 'Bajo' THEN 1 WHEN 'Medio' THEN 2 WHEN 'Alto' THEN 3 END ASC
                     `;
@@ -290,18 +409,18 @@ export default function ReporteriaGeneralClient() {
                     const dId = auth.dependenceId;
                     kpiQuery = `
                         SELECT 
-                            ROUND((SELECT COUNT(*) FROM client_tbl WHERE users_id = '${uId}'), 0) as casos_procesados,
-                            ROUND((SELECT COUNT(*) FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id WHERE c.users_id = '${uId}' AND a.level = '1'), 0) as alertas_criticas_mias,
-                            ROUND((SELECT COUNT(*) FROM client_tbl WHERE users_id = '${uId}' AND created >= CURDATE()), 0) as productividad_hoy,
+                            ROUND((SELECT COUNT(*) FROM client_tbl c WHERE ${whereClauseC}), 0) as casos_procesados,
+                            ROUND((SELECT COUNT(*) FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id WHERE a.level = '1' AND ${whereClauseC}), 0) as alertas_criticas_mias,
+                            ROUND((SELECT COUNT(*) FROM client_tbl c WHERE ${whereClauseC} AND c.created >= CURDATE()), 0) as productividad_hoy,
                             ROUND(COALESCE((SELECT COUNT(*) FROM training_progress_tbl WHERE userId = '${uId}') * 100 / NULLIF((SELECT COUNT(*) FROM training_tbl WHERE status = 1), 0), 0), 0) as progreso_entrenamiento
                     `;
                     bar1Query = `
-                        SELECT 'Yo' as label, (SELECT COUNT(*) FROM client_tbl WHERE users_id = '${uId}') as value
+                        SELECT 'Yo' as label, (SELECT ${countExpr} FROM client_tbl c WHERE ${whereClauseC}) as value
                         UNION ALL
-                        SELECT 'Equipo (Avg)' as label, COALESCE(ROUND((SELECT AVG(cnt) FROM (SELECT COUNT(*) as cnt FROM client_tbl WHERE dependence_id = '${dId}' GROUP BY users_id) as sub), 0), 0) as value
+                        SELECT 'Equipo (Avg)' as label, COALESCE(ROUND((SELECT AVG(cnt) FROM (SELECT ${countExpr} as cnt FROM client_tbl c WHERE c.dependence_id = '${dId}' ${getDateFilter('c')} GROUP BY c.users_id) as sub), 0), 0) as value
                     `;
-                    bar2Query = `SELECT t.type as label, ROUND(COUNT(*), 0) as value FROM alert_tbl t INNER JOIN client_tbl ct ON ct.id = t.client_id WHERE ct.users_id = '${uId}' GROUP BY t.type ORDER BY value DESC LIMIT 5`;
-                    lineQuery = `SELECT DATE_FORMAT(created, '%Y-%m-%d') as time_label, COUNT(*) as value FROM client_tbl WHERE users_id = '${uId}' AND created >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH) GROUP BY DATE_FORMAT(created, '%Y-%m-%d') ORDER BY time_label ASC`;
+                    bar2Query = `SELECT t.type as label, ROUND(${countExpr}, 0) as value FROM alert_tbl t INNER JOIN client_tbl c ON c.id = t.client_id WHERE ${whereClauseC} GROUP BY t.type ORDER BY value DESC LIMIT 5`;
+                    lineQuery = `SELECT ${timeExpr} as time_label, ${countExpr} as value FROM client_tbl c WHERE ${whereClauseC} GROUP BY ${timeExpr} ORDER BY time_label ASC`;
                     pieQuery = `
                         SELECT 
                             CASE 
@@ -311,9 +430,108 @@ export default function ReporteriaGeneralClient() {
                             END as label, 
                             ROUND(COUNT(*), 0) as value 
                         FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id 
-                        WHERE c.users_id = '${uId}' 
+                        WHERE ${whereClauseC} 
                         GROUP BY label
                         ORDER BY CASE label WHEN 'Bajo' THEN 1 WHEN 'Medio' THEN 2 WHEN 'Alto' THEN 3 END ASC
+                    `;
+                }
+
+                // --- NUEVAS QUERIES DE SEGMENTACIÓN ---
+                // countExpr ya usa viewType: "COUNT(*)" para búsquedas, "COUNT(DISTINCT id_number)" para clientes únicos
+                const dimensionExprMap: Record<string, { expr: string; filter: string }> = {
+                    "client_type": {
+                        expr: `CASE 
+                            WHEN LOWER(TRIM(c.client_type)) IN ('juridica','juridico') THEN 'Persona Jurídica'
+                            WHEN LOWER(TRIM(c.client_type)) = 'natural' THEN 'Persona Natural'
+                            ELSE TRIM(c.client_type)
+                        END`,
+                        filter: "AND c.client_type IS NOT NULL AND TRIM(c.client_type) != ''"
+                    },
+                    "register_client_type": {
+                        // Mapear variantes históricas a los valores canónicos de PROFILE_RISK_MAP
+                        expr: `CASE
+                            WHEN TRIM(c.register_client_type) IN (
+                                'Colaborador Laboral','COLABORADOR LABORAL',
+                                'Colaborador - Contrato Laboral','colaborador - contrato laboral'
+                            ) THEN 'Colaborador Laboral'
+                            WHEN TRIM(c.register_client_type) IN (
+                                'Colaborador Servicios','COLABORADOR SERVICIOS',
+                                'Colaborador - Contrato de Prestacion de Servicios',
+                                'Colaborador - Prestacion de Servicios',
+                                'colaborador - contrato de prestacion de servicios',
+                                'colaborador - prestacion de servicios'
+                            ) THEN 'Colaborador Servicios'
+                            ELSE TRIM(c.register_client_type)
+                        END`,
+                        filter: "AND c.register_client_type IS NOT NULL AND TRIM(c.register_client_type) != ''"
+                    },
+                    "channel": {
+                        // Valores válidos según CHANNEL_RISK_MAP: Intermediario/Tercero, Correo/Chat, Web/App, Telefónico, Asesor Externo, Presencial
+                        expr: "TRIM(c.channel)",
+                        filter: "AND c.channel IS NOT NULL AND TRIM(c.channel) != '' AND TRIM(c.channel) IN ('Intermediario/Tercero','Correo/Chat','Web/App','Telefónico','Asesor Externo','Presencial','Telefonico')"
+                    },
+                    "product": {
+                        // Filtrar datos viejos con formato de nivel (00-Bajo, 01-Medio bajo, etc.)
+                        expr: "TRIM(c.product)",
+                        filter: "AND c.product IS NOT NULL AND TRIM(c.product) != '' AND c.product NOT REGEXP '^[0-9][0-9]-'"
+                    },
+                    "complex_jurisdictions": {
+                        // Jurisdicción = País + Ciudad. city_id guarda el nombre de la ciudad
+                        expr: `CASE 
+                            WHEN c.city_id IS NOT NULL AND TRIM(c.city_id) != '' 
+                            THEN CONCAT(TRIM(c.country), ' - ', TRIM(c.city_id))
+                            ELSE TRIM(c.country)
+                        END`,
+                        filter: "AND c.country IS NOT NULL AND TRIM(c.country) != ''"
+                    }
+                };
+                const dimConfig = dimensionExprMap[dimension] || { expr: `TRIM(COALESCE(c.${dimension}, ''))`, filter: `AND c.${dimension} IS NOT NULL` };
+                const dimExpr = dimConfig.expr;
+                const dimFilter = dimConfig.filter;
+                const depWhereClause = depFilter ? depFilter : "WHERE 1=1";
+
+                // Query 1: Segmentación simple — usa countExpr (cambia con viewType: búsquedas=COUNT(*), clientes=COUNT DISTINCT)
+                const segQuery = `SELECT ${dimExpr} as label, ROUND(${countExpr}, 0) as value FROM client_tbl c ${depWhereClause} ${dimFilter} GROUP BY label ORDER BY value DESC LIMIT 20`;
+
+                // Query 2: Desglose por nivel de alerta (barras apiladas) — usa COUNT(*) de alertas siempre
+                const alertDepFilter = depFilterJoin ? depFilterJoin.replace('AND ', 'WHERE ') : 'WHERE 1=1';
+                const alertByDimensionQuery = `
+                    SELECT 
+                        ${dimExpr} as label,
+                        CASE WHEN a.level IN ('1', '2') THEN 'Alto' WHEN a.level = '3' THEN 'Medio' ELSE 'Bajo' END as alert_level,
+                        COUNT(*) as value
+                    FROM alert_tbl a 
+                    INNER JOIN client_tbl c ON a.client_id = c.id
+                    ${alertDepFilter} ${dimFilter}
+                    GROUP BY label, alert_level
+                    ORDER BY value DESC
+                    LIMIT 60
+                `;
+
+
+                let matrixQuery = "";
+                if (matrixMode === "deps") {
+                    matrixQuery = `
+                        SELECT dt.id, dt.name, COALESCE(AVG(rdt.impact), 1) as x_impact,
+                        COALESCE((SELECT COUNT(a.id) FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id WHERE c.dependence_id = dt.id) * 5.0 / 
+                        NULLIF((SELECT COUNT(c.id) FROM client_tbl c WHERE c.dependence_id = dt.id), 0), 1) as y_prob
+                        FROM dependence_tbl dt LEFT JOIN riesgos_judiciales_db.risk_action_tbl rat ON rat.dependence_id = dt.id
+                        LEFT JOIN riesgos_judiciales_db.risk_data_tbl rdt ON rdt.id = rat.risk_id
+                        WHERE ${matrixFilter} GROUP BY dt.id, dt.name
+                    `;
+                } else if (matrixMode === "inherent") {
+                    matrixQuery = `
+                        SELECT rdt.id, rdt.name, rdt.impact as x_impact, rdt.probability as y_prob
+                        FROM riesgos_judiciales_db.risk_data_tbl rdt
+                        INNER JOIN riesgos_judiciales_db.risk_action_tbl rat ON rat.risk_id = rdt.id
+                        WHERE ${auth.isSuper ? '1=1' : `rat.dependence_id = '${auth.dependenceId}'`}
+                    `;
+                } else {
+                    matrixQuery = `
+                        SELECT rdt.id, rdt.name, COALESCE(rdt.residual_impact, 1) as x_impact, COALESCE(rdt.residual_probability, 1) as y_prob
+                        FROM riesgos_judiciales_db.risk_data_tbl rdt
+                        INNER JOIN riesgos_judiciales_db.risk_action_tbl rat ON rat.risk_id = rdt.id
+                        WHERE ${auth.isSuper ? '1=1' : `rat.dependence_id = '${auth.dependenceId}'`}
                     `;
                 }
 
@@ -323,14 +541,7 @@ export default function ReporteriaGeneralClient() {
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(bar2Query)),
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(lineQuery)),
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(pieQuery)),
-                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
-                        SELECT dt.id, dt.name, COALESCE(AVG(rdt.impact), 1) as x_impact,
-                        COALESCE((SELECT COUNT(a.id) FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id WHERE c.dependence_id = dt.id) * 5.0 / 
-                        NULLIF((SELECT COUNT(c.id) FROM client_tbl c WHERE c.dependence_id = dt.id), 0), 1) as y_prob
-                        FROM dependence_tbl dt LEFT JOIN riesgos_judiciales_db.risk_action_tbl rat ON rat.dependence_id = dt.id
-                        LEFT JOIN riesgos_judiciales_db.risk_data_tbl rdt ON rdt.id = rat.risk_id
-                        WHERE ${matrixFilter} GROUP BY dt.id, dt.name
-                    `)),
+                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(matrixQuery)),
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
                         SELECT dt.name as dependence_name, COALESCE(MAX(a.\`level\`), 4) as alert_level,
                         CASE COALESCE(MAX(a.\`level\`), 4) WHEN 1 THEN 'Crítico' WHEN 2 THEN 'Alto' WHEN 3 THEN 'Medio' WHEN 4 THEN 'Sin Riesgo' ELSE 'Sin Riesgo' END as alert_description,
@@ -341,7 +552,7 @@ export default function ReporteriaGeneralClient() {
                         LEFT JOIN riesgos_judiciales_db.risk_data_tbl rdt ON rat.risk_id = rdt.id
                         LEFT JOIN client_tbl ct ON ct.dependence_id = dt.id
                         LEFT JOIN alert_tbl a ON a.client_id = ct.id
-                        WHERE ${auth.isSuper ? '1=1' : `dt.id = '${auth.dependenceId}'`}
+                        WHERE ${(viewRole === 'SUPER' && !depId) ? '1=1' : `dt.id = '${depId || auth.dependenceId}'`}
                         GROUP BY dt.name, dt.id ORDER BY risk_score DESC
                     `)),
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
@@ -407,11 +618,11 @@ export default function ReporteriaGeneralClient() {
 
                 // Procesamiento de gráfica multi-línea (para ADMIN/SUPER)
                 let finalLineData = [];
-                let finalLineConfig = [{ key: "value", name: "Búsquedas", color: "#10b981" }];
+                let finalLineConfig = [{ key: "value", label: "Búsquedas", color: "#10b981" }];
 
                 if (viewRole !== "USER" && lineRows.length > 0 && (lineRows[0].email || lineRows[0].time_label)) {
-                    const dates = [...new Set(lineRows.map((d: any) => d.time_label))].sort();
-                    const emails = [...new Set(lineRows.map((d: any) => d.email))].filter(e => e);
+                    const dates = [...new Set(lineRows.map((d: any) => d.time_label))].sort() as string[];
+                    const emails = [...new Set(lineRows.map((d: any) => d.email))].filter(e => e) as string[];
                     
                     if (emails.length > 0) {
                         finalLineData = dates.map(date => {
@@ -425,7 +636,7 @@ export default function ReporteriaGeneralClient() {
 
                         finalLineConfig = emails.map((email, i) => ({
                             key: email,
-                            name: email,
+                            label: email,
                             color: ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16"][i % 8]
                         }));
                     } else {
@@ -435,20 +646,22 @@ export default function ReporteriaGeneralClient() {
                     finalLineData = lineRows.map((d: any) => ({ label: d.time_label, value: d.value }));
                 }
 
+
+
                 setData({
                     kpis,
                     barChart1: {
                         title: viewRole === "USER" ? "Productividad vs Equipo (Consultas)" : "Top Analistas por Consultas",
                         data: bar1Rows,
                         xKey: "label",
-                        series: [{ key: "value", name: "Consultas", color: "#3b82f6" }]
+                        series: [{ key: "value", label: "Consultas", color: "#3b82f6" }]
                     },
                     barChart2: { 
                         title: viewRole === "SUPER" && globalDepId === "SYS_ADMIN" ? "Latencia Media por Módulo (ms)" : 
                                viewRole === "USER" ? "Distribución de Mis Alertas" : "Tipos de Alerta más Recurrentes",
                         data: Array.isArray(bar2D) ? bar2D : [], 
                         xKey: "label", 
-                        series: [{ key: "value", name: "Cantidad", color: "#f59e0b" }] 
+                        series: [{ key: "value", label: "Cantidad", color: "#f59e0b" }] 
                     },
                     lineChart: { 
                         title: viewRole === "SUPER" && globalDepId === "SYS_ADMIN" ? "Tráfico de Peticiones (Hoy)" : "Evolución Temporal de Búsquedas",
@@ -477,10 +690,144 @@ export default function ReporteriaGeneralClient() {
         }
 
         fetchData();
-    }, [auth, globalDepId, globalUserId, viewRole]); // Escucha cambios en auth y filtros globales
+    }, [auth, globalDepId, globalUserId, viewRole, matrixMode, datePeriod, dateFrom, dateTo]); // NO incluir viewType ni dimension aqui
+
+    // useEffect SEPARADO solo para segmentación — no recarga la página entera
+    useEffect(() => {
+        if (!auth?.userId && !auth?.dependenceId) return; // esperar auth
+        const userKey = "019bdbff-d27c-7583-b76f-80edd5ae064e";
+        const depId = (viewRole === "SUPER" && (globalDepId === "ALL" || globalDepId === "SYS_ADMIN"))
+            ? ""
+            : (globalDepId === "ALL" ? "" : (globalDepId || auth.dependenceId));
+        const depFilter = depId ? `WHERE c.dependence_id = '${depId}'` : "";
+        const depFilterJoin = depId ? `AND c.dependence_id = '${depId}'` : "";
+        const countExpr = viewType === "consultas" ? "COUNT(*)" : "COUNT(DISTINCT c.id_number)";
+
+
+        // Filtro de fecha para segmentación
+        const depWhereClause = depFilter ? depFilter : "WHERE 1=1";
+        const alertDepFilter = depFilterJoin ? depFilterJoin.replace('AND ', 'WHERE ') : 'WHERE 1=1';
+
+        let segDateFilterArray = [];
+        if (dateFrom) segDateFilterArray.push(`c.created >= '${dateFrom}'`);
+        if (dateTo) segDateFilterArray.push(`c.created <= '${dateTo} 23:59:59'`);
+        
+        let segDateFilter = "";
+        if (segDateFilterArray.length > 0) {
+            segDateFilter = `AND ${segDateFilterArray.join(' AND ')}`;
+        }
+
+        setSegLoading(true);
+        const dimensionKeys = Object.keys(dimensionExprMap);
+        const fetchPromises = dimensionKeys.flatMap(dim => {
+            const config = dimensionExprMap[dim];
+            const dimExpr = config.expr;
+            const dimFilter = config.filter;
+            const joinClause = `LEFT JOIN paises_tbl p ON c.country_id = p.id LEFT JOIN ciudades_tbl ci ON c.city_id = ci.id`;
+            const segQuery = `SELECT ${dimExpr} as label, ROUND(${countExpr}, 0) as value FROM client_tbl c ${joinClause} ${depWhereClause} ${dimFilter} ${segDateFilter} GROUP BY label ORDER BY value DESC LIMIT 20`;
+            const alertByDimensionQuery = `SELECT ${dimExpr} as label, CASE WHEN a.level IN ('1', '2') THEN 'Alto' WHEN a.level = '3' THEN 'Medio' ELSE 'Bajo' END as alert_level, COUNT(*) as value FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id ${joinClause} ${alertDepFilter} ${dimFilter} ${segDateFilter} GROUP BY label, alert_level ORDER BY value DESC LIMIT 60`;
+
+            return [
+                fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(segQuery)).then(r => r.json()).then(d => ({ dim, type: 'seg', data: d })),
+                fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(alertByDimensionQuery)).then(r => r.json()).then(d => ({ dim, type: 'alert', data: d }))
+            ];
+        });
+
+        Promise.all(fetchPromises).then(results => {
+            const newSegData: Record<string, any[]> = {};
+            const newAlertData: Record<string, any[]> = {};
+            
+            results.forEach(res => {
+                const rows = Array.isArray(res.data) ? res.data : (res.data?.results || []);
+                if (res.type === 'seg') {
+                    newSegData[res.dim] = rows;
+                } else {
+                    const alertPivotMap: any = {};
+                    rows.forEach((row: any) => {
+                        const lbl = row.label || 'Sin Datos';
+                        if (!alertPivotMap[lbl]) alertPivotMap[lbl] = { label: lbl, Alto: 0, Medio: 0, Bajo: 0 };
+                        alertPivotMap[lbl][row.alert_level] = (alertPivotMap[lbl][row.alert_level] || 0) + Number(row.value);
+                    });
+                    newAlertData[res.dim] = Object.values(alertPivotMap);
+                }
+            });
+
+            setSegmentationData(newSegData);
+            setAlertLevelData(newAlertData);
+        }).catch(console.error).finally(() => setSegLoading(false));
+    }, [auth, globalDepId, viewRole, viewType, datePeriod, dateFrom, dateTo]); // Removido dimension de dependencias
 
     if (loading) return <div className="p-8 text-center text-gray-400">Analizando estructura de riesgos...</div>;
     if (error) return <div className="p-8 text-red-500 bg-red-50 rounded-3xl border border-red-100">Error: {error}</div>;
+
+    const downloadPdf = async () => {
+        setIsDownloadingPdf(true);
+        try {
+            const getChartImage = async (id: string) => {
+                const el = document.getElementById(id);
+                if (!el) return null;
+                // Add a small delay to ensure rendering is complete
+                await new Promise(r => setTimeout(r, 100));
+                return await htmlToImage.toPng(el, { backgroundColor: '#ffffff', pixelRatio: 2 });
+            };
+
+            const bar1Img = await getChartImage('chart-bar1');
+            const bar2Img = await getChartImage('chart-bar2');
+            const lineImg = await getChartImage('chart-line');
+            const pieImg = await getChartImage('chart-pie');
+            
+            const segImages: Record<string, string | null> = {};
+            for (const dim of Object.keys(dimensionExprMap)) {
+                segImages[`${dim}-1`] = await getChartImage(`chart-seg-1-${dim}`);
+                segImages[`${dim}-2`] = await getChartImage(`chart-seg-2-${dim}`);
+            }
+
+            const payload = {
+                role: viewRole,
+                filters: {
+                    dependencia: allDependencies.find(d => d.id === globalDepId)?.name || (globalDepId === 'ALL' ? 'Todas las Dependencias' : globalDepId === 'SYS_ADMIN' ? 'Administración de Sistemas' : 'No seleccionada'),
+                    usuario: globalUserId || 'Todos los usuarios',
+                    fechaDesde: dateFrom || 'Sin límite',
+                    fechaHasta: dateTo || 'Sin límite',
+                    agrupacion: datePeriod === 'total' ? 'Anual' : datePeriod === 'semiannual' ? 'Semestral' : datePeriod === 'quarterly' ? 'Trimestral' : 'Mensual'
+                },
+                kpis: data?.kpis || [],
+                images: {
+                    bar1: bar1Img,
+                    bar2: bar2Img,
+                    line: lineImg,
+                    pie: pieImg,
+                    ...segImages
+                }
+            };
+
+            const response = await fetch('http://localhost:5001/reports/dashboard', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) throw new Error('Error al generar PDF');
+
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Reporte_Dashboard_${viewRole}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        } catch (error) {
+            console.error(error);
+            alert("Ocurrió un error al descargar el PDF. Asegúrate de que el backend (pdf-api) esté corriendo.");
+        } finally {
+            setIsDownloadingPdf(false);
+        }
+    };
+
     if (!data) return null;
 
     return (
@@ -582,6 +929,103 @@ export default function ReporteriaGeneralClient() {
                                 </p>
                             </div>
                         )}
+
+                        {/* ── FILTROS DE FECHA (visibles para TODOS los roles) ── */}
+                        <div className="space-y-2">
+                            <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1">Período</label>
+                            <div className="flex gap-1">
+                                {([
+                                    { id: "total",      label: "Total" },
+                                    { id: "semiannual", label: "Sem." },
+                                    { id: "quarterly",  label: "Trim." },
+                                    { id: "monthly",    label: "Mes" },
+                                ] as const).map(p => (
+                                    <button
+                                        key={p.id}
+                                        onClick={() => { setDatePeriod(p.id); setDateFrom(""); }}
+                                        className={cn(
+                                            "flex-1 px-2 py-2 rounded-xl text-[9px] font-black uppercase tracking-tighter transition-all",
+                                            datePeriod === p.id && !dateFrom
+                                                ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20"
+                                                : "bg-gray-50 dark:bg-gray-900 text-gray-500 border border-gray-100 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800"
+                                        )}
+                                    >{p.label}</button>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1">Desde fecha</label>
+                            <div className="relative">
+                                <input
+                                    type="date"
+                                    value={dateFrom}
+                                    max={dateTo || new Date().toISOString().split('T')[0]}
+                                    onChange={(e) => {
+                                        setDateFrom(e.target.value);
+                                        setDatePeriod("total"); // Desactivar período preset al elegir fecha manual
+                                    }}
+                                    className="block w-full px-4 py-2 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl text-[10px] font-black outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                                />
+                                {dateFrom && (
+                                    <button
+                                        onClick={() => setDateFrom("")}
+                                        className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500 text-xs font-black transition-colors"
+                                        title="Limpiar fecha"
+                                    >×</button>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1">Hasta fecha</label>
+                            <div className="relative">
+                                <input
+                                    type="date"
+                                    value={dateTo}
+                                    min={dateFrom}
+                                    max={new Date().toISOString().split('T')[0]}
+                                    onChange={(e) => {
+                                        setDateTo(e.target.value);
+                                        setDatePeriod("total"); // Desactivar período preset al elegir fecha manual
+                                    }}
+                                    className="block w-full px-4 py-2 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl text-[10px] font-black outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                                />
+                                {dateTo && (
+                                    <button
+                                        onClick={() => setDateTo("")}
+                                        className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500 text-xs font-black transition-colors"
+                                        title="Limpiar fecha"
+                                    >×</button>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Botón Descargar Reporte PDF */}
+                        <div className="flex items-end h-full mt-auto">
+                            <button
+                                onClick={downloadPdf}
+                                disabled={isDownloadingPdf}
+                                className={cn(
+                                    "flex items-center gap-2 px-4 py-2 border rounded-xl text-[10px] font-black uppercase tracking-tighter transition-all shadow-sm",
+                                    isDownloadingPdf 
+                                        ? "bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed dark:bg-gray-800 dark:border-gray-700 dark:text-gray-500" 
+                                        : "bg-red-500 hover:bg-red-600 border-red-600 text-white"
+                                )}
+                            >
+                                {isDownloadingPdf ? (
+                                    <>
+                                        <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                                        Generando...
+                                    </>
+                                ) : (
+                                    <>
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-file-text"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
+                                        Descargar PDF
+                                    </>
+                                )}
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -613,7 +1057,9 @@ export default function ReporteriaGeneralClient() {
 
                 {activeTab === "operacion" ? (
                     <>
+
                         {/* 2. Matriz (Existente) */}
+
                         <div className="bg-white dark:bg-gray-800 rounded-[32px] shadow-xl border border-gray-100 dark:border-gray-700 mb-8 overflow-hidden">
                             {/* Cabecera de Configuración */}
                             <div className="p-6 border-b border-gray-50 dark:border-gray-900">
@@ -810,25 +1256,120 @@ export default function ReporteriaGeneralClient() {
 
                         {/* 4. Gráficas Principales */}
                         <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 mb-8">
-                            <ChartCard title={data.barChart1.title}>
-                                <BarChartGeneric data={data.barChart1.data} xKey={data.barChart1.xKey} series={data.barChart1.series} />
-                            </ChartCard>
-                            <ChartCard title={data.barChart2.title}>
-                                <BarChartGeneric data={data.barChart2.data} xKey={data.barChart2.xKey} series={data.barChart2.series} />
-                            </ChartCard>
-                            <ChartCard title={data.lineChart.title}>
-                                {viewRole === "SUPER" && globalDepId === "SYS_ADMIN" ? (
+                            <div id="chart-bar1" className="bg-white dark:bg-gray-800 rounded-3xl p-2">
+                                <ChartCard title={data.barChart1.title}>
+                                    <BarChartGeneric data={data.barChart1.data} xKey={data.barChart1.xKey} series={data.barChart1.series} />
+                                </ChartCard>
+                            </div>
+                            <div id="chart-bar2" className="bg-white dark:bg-gray-800 rounded-3xl p-2">
+                                <ChartCard title={data.barChart2.title}>
+                                    <BarChartGeneric data={data.barChart2.data} xKey={data.barChart2.xKey} series={data.barChart2.series} />
+                                </ChartCard>
+                            </div>
+                            <div id="chart-line" className="bg-white dark:bg-gray-800 rounded-3xl p-2">
+                                <ChartCard title={data.lineChart.title}>
                                     <LineChartGeneric data={data.lineChart.data} xKey={data.lineChart.xKey} lines={data.lineChart.lines} />
-                                ) : (
-                                    <LineChartGeneric data={data.lineChart.data} xKey={data.lineChart.xKey} lines={data.lineChart.lines} />
-                                )}
-                            </ChartCard>
-                            <ChartCard title={data.pieChart.title}>
-                                <PieChartGeneric data={data.pieChart.data} nameKey={data.pieChart.nameKey} valueKey={data.pieChart.valueKey} />
-                            </ChartCard>
+                                </ChartCard>
+                            </div>
+                            <div id="chart-pie" className="bg-white dark:bg-gray-800 rounded-3xl p-2">
+                                <ChartCard title={data.pieChart.title}>
+                                    <PieChartGeneric data={data.pieChart.data} nameKey={data.pieChart.nameKey} valueKey={data.pieChart.valueKey} />
+                                </ChartCard>
+                            </div>
                         </div>
 
-                        {/* 5. Tablas de Análisis de Riesgos (Vertical Stack) */}
+                        {/* 5. Segmentación Avanzada + Tablas de Análisis de Riesgos */}
+                        {/* SECCIÓN DE SEGMENTACIÓN AVANZADA */}
+                        <div className="space-y-4 mb-8">
+                            {/* Controles compartidos entre ambas gráficas */}
+                            <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 p-4 flex flex-wrap gap-3 items-center justify-between">
+                                <div className="flex gap-2 flex-wrap items-center">
+                                    <span className="text-[10px] font-black uppercase tracking-widest text-gray-400 mr-1">Segmentar por:</span>
+                                    {[
+                                        { id: "client_type", label: "Tipo Cliente" },
+                                        { id: "register_client_type", label: "Relación" },
+                                        { id: "product", label: "Producto" },
+                                        { id: "channel", label: "Canal" },
+                                        { id: "complex_jurisdictions", label: "Jurisdicción" }
+                                    ].map(opt => (
+                                        <button 
+                                            key={opt.id}
+                                            onClick={() => setDimension(opt.id)}
+                                            className={cn(
+                                                "px-3 py-1.5 rounded-full text-[10px] font-bold uppercase transition-all",
+                                                dimension === opt.id ? "bg-purple-600 text-white shadow-lg shadow-purple-500/30" : "bg-gray-100 dark:bg-gray-800 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700"
+                                            )}
+                                        >{opt.label}</button>
+                                    ))}
+                                </div>
+                                <div className="flex p-1 bg-gray-100 dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700">
+                                    {(["consultas", "clientes"] as const).map(vt => (
+                                        <button
+                                            key={vt}
+                                            onClick={() => setViewType(vt)}
+                                            className={cn(
+                                                "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-tighter transition-all",
+                                                viewType === vt ? "bg-white dark:bg-gray-800 text-blue-500 shadow-sm" : "text-gray-400"
+                                            )}
+                                        >{vt === "consultas" ? "Búsquedas" : "Clientes"}</button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className={cn("flex flex-col gap-8 relative", segLoading && "opacity-60 pointer-events-none")}>
+                                {segLoading && (
+                                    <div className="absolute inset-0 flex items-center justify-center z-10">
+                                        <div className="flex items-center gap-2 bg-white dark:bg-gray-800 px-4 py-2 rounded-xl shadow-lg border border-gray-100 dark:border-gray-700">
+                                            <div className="w-3 h-3 rounded-full bg-purple-500 animate-bounce" style={{ animationDelay: '0ms' }} />
+                                            <div className="w-3 h-3 rounded-full bg-purple-500 animate-bounce" style={{ animationDelay: '150ms' }} />
+                                            <div className="w-3 h-3 rounded-full bg-purple-500 animate-bounce" style={{ animationDelay: '300ms' }} />
+                                        </div>
+                                    </div>
+                                )}
+
+                                {Object.entries(dimensionExprMap).map(([dimKey, config]) => {
+                                    const dimSegData = segmentationData[dimKey] || [];
+                                    const dimAlertData = alertLevelData[dimKey] || [];
+                                    if (dimSegData.length === 0) return null;
+
+                                    return (
+                                        <div key={dimKey} className="grid grid-cols-1 lg:grid-cols-2 gap-4 pb-4 border-b border-gray-100 dark:border-gray-800 last:border-0">
+                                            {/* Gráfica 1: Segmentación simple */}
+                                            <div id={`chart-seg-1-${dimKey}`} className="bg-white dark:bg-gray-800 rounded-3xl p-2">
+                                                <ChartCard title={`Segmentación por ${config.label} (${viewType === "consultas" ? "Búsquedas" : "Clientes"})`} height="auto">
+                                                    <div className="h-[280px]">
+                                                        <BarChartGeneric 
+                                                            data={dimSegData} 
+                                                            xKey="label" 
+                                                            series={[{ key: "value", label: viewType === "consultas" ? "Búsquedas" : "Clientes", color: "#a855f7" }]} 
+                                                        />
+                                                    </div>
+                                                </ChartCard>
+                                            </div>
+
+                                            {/* Gráfica 2: Misma dimensión + desglose por nivel de alerta */}
+                                            <div id={`chart-seg-2-${dimKey}`} className="bg-white dark:bg-gray-800 rounded-3xl p-2">
+                                                <ChartCard title={`Alertas por ${config.label} y Nivel`} height="auto">
+                                                    <div className="h-[280px]">
+                                                        <BarChartGeneric 
+                                                            data={dimAlertData} 
+                                                            xKey="label" 
+                                                            series={[
+                                                                { key: "Alto", label: "Alto", color: "#ef4444" },
+                                                                { key: "Medio", label: "Medio", color: "#f97316" },
+                                                                { key: "Bajo", label: "Bajo", color: "#10b981" }
+                                                            ]} 
+                                                        />
+                                                    </div>
+                                                </ChartCard>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* Tablas de Análisis de Riesgos (Vertical Stack) */}
                         <div className="flex flex-col gap-8 mb-8 animate-in fade-in slide-in-from-bottom-6 duration-700 delay-300">
                             <div>
                                 <ChartCard title={data.table.title} height="auto">
@@ -861,7 +1402,7 @@ export default function ReporteriaGeneralClient() {
                                                 render: (val) => <span className={cn("font-black", val > 7 ? "text-red-500" : "text-gray-500")}>{Math.round(val)}</span>
                                             }
                                         ]} 
-                                        rows={data.table.data || []} 
+                                        rows={data.table.rows || []} 
                                     />
                                 </ChartCard>
                             </div>

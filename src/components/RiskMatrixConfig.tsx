@@ -72,6 +72,7 @@ interface RiskConfig {
     residualProbability: number;
     residualImpact: number;
     requiresImprovement: boolean;
+    manualResidual?: boolean;
     justification: string;
     phva?: PHVA;
 }
@@ -283,6 +284,7 @@ export default function RiskMatrixConfig() {
         residualProbability: 2,
         residualImpact: 10,
         requiresImprovement: false,
+        manualResidual: false,
         justification: ""
     });
 
@@ -308,6 +310,24 @@ export default function RiskMatrixConfig() {
             setConfig(prev => ({ ...prev, riskType: activeRiskTypes.current[0] }));
         }
     }, [config.dependenceId, dependencies]);
+
+    useEffect(() => {
+        if (!config.manualResidual) {
+            const avgEfficacy = config.mitigations.length > 0 
+                ? config.mitigations.reduce((acc, m) => acc + (m.efficacy || 0), 0) / config.mitigations.length 
+                : 0;
+            
+            // Reducción proporcional
+            const redProb = Math.max(1, Math.ceil(config.probability * (1 - avgEfficacy)));
+            const redImpact = Math.max(1, Math.ceil(config.impact * (1 - avgEfficacy)));
+
+            setConfig(prev => ({
+                ...prev,
+                residualProbability: redProb,
+                residualImpact: redImpact
+            }));
+        }
+    }, [config.probability, config.impact, config.mitigations, config.manualResidual]);
 
     const loadRisks = async (depId: string, isSuper: boolean) => {
         try {
@@ -414,12 +434,6 @@ export default function RiskMatrixConfig() {
             const newImpacts = prev.associatedImpacts.includes(impact)
                 ? prev.associatedImpacts.filter(i => i !== impact)
                 : [...prev.associatedImpacts, impact];
-            
-            // Business Rule: Auto-suggest ROS for Legal or Reputational
-            if ((impact === "Legal" || impact === "Reputacional") && !prev.mitigations.some(m => m.controlType.includes("ROS"))) {
-                // We don't automatically add, but we could highlight or suggest
-            }
-            
             return { ...prev, associatedImpacts: newImpacts };
         });
     };
@@ -498,9 +512,10 @@ export default function RiskMatrixConfig() {
                 context: [],
                 associatedImpacts: [],
                 treatment: TREATMENT_OPTIONS[1],
-                residualProbability: 2,
-                residualImpact: 10,
-                requiresImprovement: false
+                residualProbability: risk.residual_probability || 2,
+                residualImpact: risk.residual_impact || 10,
+                requiresImprovement: false,
+                manualResidual: true
             });
 
             setIsEditing(true);
@@ -515,7 +530,52 @@ export default function RiskMatrixConfig() {
 
     const handleSave = async () => {
         setLoading(true);
+        const userKey = process.env.NEXT_PUBLIC_DASHBOARD_USER_KEY || "019bdbff-d27c-7583-b76f-80edd5ae064e";
+        
         try {
+            const riskPayload = {
+                name: config.customRiskName || config.catalogRisk,
+                description: config.description,
+                impact: config.impact,
+                probability: config.probability,
+                residual_impact: config.residualImpact,
+                residual_probability: config.residualProbability,
+                status: 'ACTIVO'
+            };
+
+            if (isEditing && config.id) {
+                await fetch(`/api/sql?x-user-key=${userKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sql: `UPDATE riesgos_judiciales_db.risk_data_tbl SET name = ?, description = ?, impact = ?, probability = ?, residual_impact = ?, residual_probability = ? WHERE id = ?`,
+                        params: [riskPayload.name, riskPayload.description, riskPayload.impact, riskPayload.probability, riskPayload.residual_impact, riskPayload.residual_probability, config.id]
+                    })
+                });
+            } else {
+                const res = await fetch(`/api/sql?x-user-key=${userKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sql: `INSERT INTO riesgos_judiciales_db.risk_data_tbl (name, description, impact, probability, residual_impact, residual_probability, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                        params: [riskPayload.name, riskPayload.description, riskPayload.impact, riskPayload.probability, riskPayload.residual_impact, riskPayload.residual_probability, riskPayload.status]
+                    })
+                });
+                const data = await res.json();
+                const newId = data.data.insertId;
+
+                if (newId) {
+                    await fetch(`/api/sql?x-user-key=${userKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            sql: `INSERT INTO riesgos_judiciales_db.risk_action_tbl (risk_id, description, type, person, dependence_id, status) VALUES (?, ?, ?, ?, ?, ?)`,
+                            params: [newId, config.mitigations[0]?.description || '', config.mitigations[0]?.controlType || '', config.mitigations[0]?.responsible || '', config.dependenceId, 'ACTIVO']
+                        })
+                    });
+                }
+            }
+
             alert(`Configuración de riesgo ${isEditing ? 'actualizada' : 'creada'} exitosamente`);
             await loadRisks(auth.dependenceId, auth.isSuper);
             setActiveTab("list");
@@ -523,6 +583,7 @@ export default function RiskMatrixConfig() {
             resetForm();
         } catch (err) {
             console.error("Error saving", err);
+            alert("Error al guardar el riesgo.");
         } finally {
             setLoading(false);
         }
@@ -558,7 +619,8 @@ export default function RiskMatrixConfig() {
             treatment: TREATMENT_OPTIONS[1],
             residualProbability: 2,
             residualImpact: 10,
-            requiresImprovement: false
+            requiresImprovement: false,
+            manualResidual: false
         });
         setIsEditing(false);
         setStep(1);
@@ -567,9 +629,6 @@ export default function RiskMatrixConfig() {
     const inherentRisk = config.impact * config.probability;
     const residualRisk = config.residualImpact * config.residualProbability;
     
-    // Eficacia promedio/combinada para mostrar como %
-    const combinedEfficacy = 1 - (residualRisk / inherentRisk || 1);
-
     const getRiskZone = (score: number) => {
         if (score <= 5) return { label: "Zona Aceptable", color: "text-green-500", bg: "bg-green-500/10", zone: "Verde" };
         if (score <= 10) return { label: "Zona Tolerable", color: "text-yellow-500", bg: "bg-yellow-500/10", zone: "Amarillo" };
@@ -675,8 +734,8 @@ export default function RiskMatrixConfig() {
                                                     </span>
                                                 </td>
                                                 <td className="px-8 py-6 text-center">
-                                                    <span className="px-3 py-1 bg-blue-50 dark:bg-blue-900/20 text-blue-500 rounded-full text-[10px] font-black">
-                                                        --
+                                                    <span className={cn("px-3 py-1 rounded-full text-[10px] font-black uppercase", getRiskZone(risk.residual_impact * risk.residual_probability).bg, getRiskZone(risk.residual_impact * risk.residual_probability).color)}>
+                                                        {risk.residual_impact * risk.residual_probability}
                                                     </span>
                                                 </td>
                                                 <td className="px-8 py-6 text-right">
@@ -703,8 +762,8 @@ export default function RiskMatrixConfig() {
                                         <Edit3 className="w-4 h-4" />
                                     </div>
                                     <div className="text-sm">
-                                        <span className="font-bold text-blue-500">Modo Edición de Controles:</span>
-                                        <span className="text-gray-500 ml-2">Parámetros inherentes bloqueados.</span>
+                                        <span className="font-bold text-blue-500">Modo Edición:</span>
+                                        <span className="text-gray-500 ml-2">Editando registros existentes.</span>
                                     </div>
                                 </div>
                                 <button onClick={resetForm} className="text-xs font-bold text-red-500 hover:underline">Cancelar y Volver</button>
@@ -749,7 +808,6 @@ export default function RiskMatrixConfig() {
                                             <div className="space-y-4">
                                                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Tipo de Riesgo (SARLAFT)</label>
                                                 <select 
-                                                    disabled={isEditing}
                                                     value={config.riskType}
                                                     onChange={(e) => setConfig({...config, riskType: e.target.value})}
                                                     className="w-full px-6 py-5 bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-700 rounded-[24px] focus:ring-4 focus:ring-blue-500/20 outline-none transition-all appearance-none shadow-sm dark:text-white"
@@ -763,7 +821,6 @@ export default function RiskMatrixConfig() {
                                                     <BookOpen className="w-3 h-3" /> Riesgo a Catalogar
                                                 </label>
                                                 <select 
-                                                    disabled={isEditing}
                                                     value={config.catalogRisk}
                                                     onChange={(e) => setConfig({...config, catalogRisk: e.target.value})}
                                                     className="w-full px-6 py-5 bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-700 rounded-[24px] focus:ring-4 focus:ring-blue-500/20 outline-none transition-all appearance-none shadow-sm dark:text-white"
@@ -791,7 +848,7 @@ export default function RiskMatrixConfig() {
                                             <div className="space-y-4 col-span-full pt-4 border-t border-gray-100 dark:border-gray-700">
                                                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Dependencia / Área Responsable</label>
                                                 <select 
-                                                    disabled={isEditing || !auth.isSuper}
+                                                    disabled={!auth.isSuper}
                                                     value={config.dependenceId}
                                                     onChange={(e) => setConfig({...config, dependenceId: e.target.value})}
                                                     className="w-full px-6 py-5 bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-700 rounded-[24px] focus:ring-4 focus:ring-blue-500/20 outline-none appearance-none transition-all dark:text-white"
@@ -804,7 +861,6 @@ export default function RiskMatrixConfig() {
                                             <div className="space-y-4 col-span-full">
                                                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Descripción Detallada</label>
                                                 <textarea 
-                                                    disabled={isEditing}
                                                     value={config.description}
                                                     onChange={(e) => setConfig({...config, description: e.target.value})}
                                                     placeholder="Escriba la descripción del riesgo..."
@@ -836,17 +892,10 @@ export default function RiskMatrixConfig() {
                                                     </div>
                                                     <input 
                                                         type="range" min="1" max="4" 
-                                                        disabled={isEditing}
                                                         value={config.probability}
                                                         onChange={(e) => setConfig({...config, probability: parseInt(e.target.value)})}
                                                         className="w-full h-3 bg-gray-100 dark:bg-gray-700 rounded-full appearance-none cursor-pointer accent-blue-600 shadow-sm"
                                                     />
-                                                    <div className="flex justify-between text-[10px] text-gray-400 font-bold px-1 uppercase tracking-tighter">
-                                                        <span>Baja</span>
-                                                        <span>M. Baja</span>
-                                                        <span>Media</span>
-                                                        <span>Alta</span>
-                                                    </div>
                                                 </div>
 
                                                 <div className="space-y-6 pt-6 border-t border-gray-100 dark:border-gray-700">
@@ -858,7 +907,6 @@ export default function RiskMatrixConfig() {
                                                         {[5, 10, 20].map(val => (
                                                             <button 
                                                                 key={val}
-                                                                disabled={isEditing}
                                                                 onClick={() => setConfig({...config, impact: val})}
                                                                 className={cn(
                                                                     "flex-1 py-3 rounded-xl text-xs font-black transition-all border",
@@ -870,22 +918,9 @@ export default function RiskMatrixConfig() {
                                                         ))}
                                                     </div>
                                                 </div>
-
-                                                <div className="space-y-4 pt-6 border-t border-gray-100 dark:border-gray-700">
-                                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
-                                                        <Activity className="w-4 h-4 text-purple-500" /> Opción de Manejo
-                                                    </label>
-                                                    <select 
-                                                        value={config.treatment}
-                                                        onChange={(e) => setConfig({ ...config, treatment: e.target.value })}
-                                                        className="w-full px-5 py-4 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-2xl text-sm outline-none transition-all dark:text-white"
-                                                    >
-                                                        {TREATMENT_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                                                    </select>
-                                                </div>
                                             </div>
 
-                                            <div className="flex flex-col justify-center items-center p-12 bg-gray-50 dark:bg-gray-900/50 rounded-[40px] border border-gray-100 dark:border-gray-700 space-y-6 relative overflow-hidden group">
+                                            <div className="flex flex-col justify-center items-center p-12 bg-gray-50 dark:bg-gray-900/50 rounded-[40px] border border-gray-100 dark:border-gray-700 space-y-6 relative overflow-hidden">
                                                 <div className={cn("absolute inset-0 opacity-10 transition-colors duration-500", getRiskZone(inherentRisk).bg)} />
                                                 <div className="text-center relative z-10">
                                                     <div className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-2">Puntaje Inherente</div>
@@ -920,9 +955,9 @@ export default function RiskMatrixConfig() {
                                             {config.mitigations.map((mitigation, idx) => (
                                                 <div 
                                                     key={mitigation.id}
-                                                    className="p-8 bg-gray-50 dark:bg-gray-900/50 rounded-[32px] border border-gray-100 dark:border-gray-700 space-y-8 group relative overflow-hidden"
+                                                    className="p-8 bg-gray-50 dark:bg-gray-900/50 rounded-[32px] border border-gray-100 dark:border-gray-700 space-y-8 group relative"
                                                 >
-                                                    <div className="flex justify-between items-center relative z-10">
+                                                    <div className="flex justify-between items-center">
                                                         <div className="flex items-center gap-3">
                                                             <div className="w-10 h-10 bg-gray-900 text-white rounded-xl flex items-center justify-center font-black text-sm">
                                                                 {idx + 1}
@@ -931,17 +966,15 @@ export default function RiskMatrixConfig() {
                                                         </div>
                                                         <button 
                                                             onClick={() => handleRemoveMitigation(mitigation.id)}
-                                                            className="opacity-0 group-hover:opacity-100 p-2 text-red-400 hover:text-red-500 transition-all"
+                                                            className="p-2 text-red-400 hover:text-red-500 transition-all"
                                                         >
                                                             <Trash2 className="w-5 h-5" />
                                                         </button>
                                                     </div>
 
-                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 relative z-10">
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                                                         <div className="space-y-4">
-                                                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 flex items-center gap-2">
-                                                                <Activity className="w-3 h-3" /> Tipo de Control (Naturaleza)
-                                                            </label>
+                                                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Tipo de Control</label>
                                                             <select 
                                                                 value={mitigation.controlType}
                                                                 onChange={(e) => handleMitigationChange(mitigation.id, "controlType", e.target.value)}
@@ -951,68 +984,14 @@ export default function RiskMatrixConfig() {
                                                             </select>
                                                         </div>
                                                         <div className="space-y-4">
-                                                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 flex items-center gap-2">
-                                                                <User className="w-3 h-3" /> Área Responsable
-                                                            </label>
+                                                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Área Responsable</label>
                                                             <input 
                                                                 type="text"
                                                                 value={mitigation.responsible}
                                                                 onChange={(e) => handleMitigationChange(mitigation.id, "responsible", e.target.value)}
-                                                                placeholder="Área o cargo responsable..."
+                                                                placeholder="Responsable..."
                                                                 className="w-full bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl p-4 text-sm outline-none transition-all dark:text-white"
-                                                                list="responsible-areas"
                                                             />
-                                                            <datalist id="responsible-areas">
-                                                                {RESPONSIBLE_AREAS.map(area => <option key={area} value={area} />)}
-                                                            </datalist>
-                                                        </div>
-
-                                                        <div className="space-y-4 col-span-full">
-                                                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Descripción del Control</label>
-                                                            <textarea 
-                                                                value={mitigation.description}
-                                                                onChange={(e) => handleMitigationChange(mitigation.id, "description", e.target.value)}
-                                                                placeholder="¿Cómo opera este control específicamente?"
-                                                                className="w-full bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl p-4 text-sm outline-none h-20 transition-all dark:text-white"
-                                                            />
-                                                        </div>
-
-                                                        <div className="space-y-4">
-                                                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Evaluación de Adecuación</label>
-                                                            <select 
-                                                                value={mitigation.evaluation}
-                                                                onChange={(e) => handleMitigationChange(mitigation.id, "evaluation", e.target.value)}
-                                                                className="w-full px-5 py-4 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl text-sm outline-none transition-all dark:text-white"
-                                                            >
-                                                                <option value="SÍ SE ESTÁN APLICANDO Y SON ADECUADOS">SÍ SE ESTÁN APLICANDO Y SON ADECUADOS</option>
-                                                                <option value="NO SE ESTÁN APLICANDO">NO SE ESTÁN APLICANDO</option>
-                                                                <option value="SE APLICAN PARCIALMENTE">SE APLICAN PARCIALMENTE</option>
-                                                            </select>
-                                                        </div>
-
-                                                        <div className="space-y-4">
-                                                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 flex justify-between">
-                                                                <span>Eficacia Técnica de Mitigación</span>
-                                                                <span className="text-blue-500">{(mitigation.efficacy * 100).toFixed(0)}%</span>
-                                                            </label>
-                                                            <div className="flex gap-2">
-                                                                {EFFICACY_LABELS.map(level => {
-                                                                    const isActive = Math.abs(level.value - mitigation.efficacy) < 0.05;
-                                                                    return (
-                                                                        <button
-                                                                            key={level.value}
-                                                                            type="button"
-                                                                            onClick={() => handleMitigationChange(mitigation.id, "efficacy", level.value)}
-                                                                            className={cn(
-                                                                                "flex-1 h-3 rounded-full transition-all duration-300",
-                                                                                isActive ? level.color : "bg-gray-200 dark:bg-gray-700 hover:bg-gray-300"
-                                                                            )}
-                                                                            title={level.label}
-                                                                        />
-                                                                    );
-                                                                })}
-                                                            </div>
-                                                            <div className="text-[9px] text-gray-400 font-bold uppercase text-center tracking-widest">Escala SARLAFT Institucional (Máx 85%)</div>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -1028,109 +1007,30 @@ export default function RiskMatrixConfig() {
                                                 <Zap className="w-10 h-10" />
                                             </div>
                                             <div className="space-y-1">
-                                                <h3 className="text-3xl font-black text-gray-900 dark:text-white uppercase tracking-tight">Paso 4: Riesgo Residual y Mejora</h3>
-                                                <p className="text-gray-500 dark:text-gray-400 text-sm">Documentación del remanente y Plan PHVA.</p>
+                                                <h3 className="text-3xl font-black text-gray-900 dark:text-white uppercase tracking-tight">Paso 4: Riesgo Residual</h3>
+                                                <p className="text-gray-500 dark:text-gray-400 text-sm">Validación del impacto residual final.</p>
                                             </div>
                                         </div>
 
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
-                                            <div className="space-y-8">
-                                                <div className="p-8 bg-blue-50/50 dark:bg-blue-900/10 rounded-3xl border border-blue-100 dark:border-blue-900/30 space-y-8">
-                                                    <h4 className="text-xs font-black text-blue-600 uppercase tracking-[0.2em] flex items-center gap-2">
-                                                        <RefreshCw className="w-4 h-4" /> Recalibración Manual del Residual
-                                                    </h4>
-                                                    
-                                                    <div className="space-y-4">
-                                                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Probabilidad Residual</label>
-                                                        <div className="flex gap-2">
-                                                            {[1, 2, 3].map(val => (
-                                                                <button
-                                                                    key={val}
-                                                                    onClick={() => setConfig({ ...config, residualProbability: val })}
-                                                                    className={cn(
-                                                                        "flex-1 py-3 rounded-xl text-xs font-bold transition-all border",
-                                                                        config.residualProbability === val ? "bg-blue-600 text-white border-blue-600 shadow-md" : "bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 dark:text-white"
-                                                                    )}
-                                                                >
-                                                                    {val === 1 ? "Baja" : val === 2 ? "Media" : "Alta"}
-                                                                </button>
-                                                            ))}
-                                                        </div>
-                                                    </div>
-
-                                                    <div className="space-y-4">
-                                                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Impacto Residual</label>
-                                                        <div className="flex gap-2">
-                                                            {[5, 10, 20].map(val => (
-                                                                <button
-                                                                    key={val}
-                                                                    onClick={() => setConfig({ ...config, residualImpact: val })}
-                                                                    className={cn(
-                                                                        "flex-1 py-3 rounded-xl text-xs font-bold transition-all border",
-                                                                        config.residualImpact === val ? "bg-orange-500 text-white border-orange-500 shadow-md" : "bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 dark:text-white"
-                                                                    )}
-                                                                >
-                                                                    {val === 5 ? "Leve" : val === 10 ? "Mod" : "Cat"}
-                                                                </button>
-                                                            ))}
-                                                        </div>
-                                                    </div>
+                                        <div className="flex flex-col items-center justify-center p-12 bg-gray-900 rounded-[40px] shadow-2xl relative overflow-hidden">
+                                            <div className={cn("absolute inset-0 opacity-20 transition-colors duration-500", getRiskZone(residualRisk).bg)} />
+                                            <div className="text-center relative z-10">
+                                                <div className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-2">Resultado Residual Final</div>
+                                                <div className={cn("text-8xl font-black transition-colors duration-500", getRiskZone(residualRisk).color)}>
+                                                    {residualRisk}
                                                 </div>
-
-                                                <label className="flex items-center gap-3 cursor-pointer p-5 rounded-2xl bg-purple-50/50 dark:bg-purple-900/10 border border-purple-100 dark:border-purple-900/20 transition-all hover:bg-purple-50">
-                                                    <input 
-                                                        type="checkbox"
-                                                        checked={config.requiresImprovement}
-                                                        onChange={(e) => setConfig({ ...config, requiresImprovement: e.target.checked })}
-                                                        className="w-5 h-5 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
-                                                    />
-                                                    <div className="flex-1">
-                                                        <div className="text-sm font-black text-purple-900 dark:text-purple-100">Requiere Plan de Mejora</div>
-                                                        <div className="text-[10px] text-purple-400 font-bold uppercase tracking-widest">Active para documentar Ciclo PHVA</div>
-                                                    </div>
-                                                </label>
                                             </div>
-
-                                            <div className="flex flex-col justify-center items-center p-12 bg-gray-900 rounded-[40px] shadow-2xl relative overflow-hidden group">
-                                                <div className={cn("absolute inset-0 opacity-20 transition-colors duration-500", getRiskZone(residualRisk).bg)} />
-                                                <div className="text-center relative z-10">
-                                                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-2">Resultado Residual Final</div>
-                                                    <div className={cn("text-8xl font-black transition-colors duration-500", getRiskZone(residualRisk).color)}>
-                                                        {residualRisk}
-                                                    </div>
-                                                </div>
-                                                <div className={cn("mt-6 px-10 py-3 rounded-full text-xs font-black uppercase tracking-widest shadow-xl transition-all duration-500 relative z-10", getRiskZone(residualRisk).bg, getRiskZone(residualRisk).color)}>
-                                                    {getRiskZone(residualRisk).label}
-                                                </div>
+                                            <div className={cn("mt-6 px-10 py-3 rounded-full text-xs font-black uppercase tracking-widest shadow-xl transition-all duration-500 relative z-10", getRiskZone(residualRisk).bg, getRiskZone(residualRisk).color)}>
+                                                {getRiskZone(residualRisk).label}
                                             </div>
                                         </div>
 
-                                        {config.requiresImprovement && (
-                                            <div className="mt-8 p-10 bg-gray-50 dark:bg-gray-900/50 rounded-[32px] border border-gray-100 dark:border-gray-700 space-y-8 animate-in slide-in-from-top-4 duration-500">
-                                                <h4 className="text-sm font-black text-purple-600 uppercase tracking-[0.2em] flex items-center gap-2">
-                                                    <Activity className="w-5 h-5" /> MÓDULO 9 — PLAN DE MEJORA INSTITUCIONAL (Ciclo PHVA)
-                                                </h4>
-                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                                    {["Planear", "Hacer", "Verificar", "Actuar"].map((fase) => (
-                                                        <div key={fase} className="p-6 bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 space-y-4 shadow-sm">
-                                                            <div className="text-[10px] font-black text-purple-500 uppercase tracking-[0.2em]">{fase}</div>
-                                                            <textarea className="w-full px-4 py-3 text-sm bg-gray-50 dark:bg-gray-900 border-none rounded-xl h-24 resize-none outline-none focus:ring-2 focus:ring-purple-500/20 dark:text-white" placeholder={`Especifique acciones de ${fase}...`} />
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        <div className="p-8 bg-gray-900 rounded-[32px] text-white space-y-6">
-                                            <div className="flex items-center gap-3">
-                                                <FileText className="w-5 h-5 text-blue-400" />
-                                                <h4 className="font-bold uppercase tracking-widest text-xs">MÓDULO 10 — Justificación Técnica de la Mitigación</h4>
-                                            </div>
+                                        <div className="p-8 bg-gray-50 dark:bg-gray-900/50 rounded-[32px] border border-gray-100 dark:border-gray-700 space-y-6">
+                                            <h4 className="font-bold uppercase tracking-widest text-xs">MÓDULO 10 — Justificación</h4>
                                             <textarea 
                                                 value={config.justification}
                                                 onChange={(e) => setConfig({...config, justification: e.target.value})}
-                                                placeholder="Sustente técnicamente por qué se asignó esta eficacia y los resultados residuales obtenidos..."
-                                                className="w-full bg-white/5 border border-white/10 rounded-2xl p-6 text-sm focus:ring-2 focus:ring-blue-500 outline-none h-32 transition-all"
+                                                className="w-full bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl p-6 text-sm focus:ring-2 focus:ring-blue-500 outline-none h-32 transition-all"
                                             />
                                         </div>
                                     </div>
@@ -1155,26 +1055,13 @@ export default function RiskMatrixConfig() {
                                             <ChevronRight className="w-5 h-5" />
                                         </button>
                                     ) : (
-                                        <div className="relative">
-                                            {!canSave && (
-                                                <p className="absolute -top-10 right-0 text-[10px] text-red-500 font-bold bg-white p-2 rounded shadow-sm border border-red-100 flex items-center gap-2">
-                                                    <AlertTriangle className="w-3 h-3" /> Requiere mín. 2 controles por Riesgo Inaceptable
-                                                </p>
-                                            )}
-                                            <button 
-                                                disabled={!canSave}
-                                                onClick={handleSave}
-                                                className={cn(
-                                                    "px-10 py-5 rounded-[24px] font-black flex items-center gap-3 transition-all",
-                                                    canSave 
-                                                        ? "bg-blue-600 text-white shadow-xl shadow-blue-600/30 hover:bg-blue-700 hover:scale-105 active:scale-95"
-                                                        : "bg-gray-200 text-gray-400 cursor-not-allowed"
-                                                )}
-                                            >
-                                                {isEditing ? 'Actualizar Riesgo' : 'Finalizar y Guardar'}
-                                                <Save className="w-5 h-5" />
-                                            </button>
-                                        </div>
+                                        <button 
+                                            onClick={handleSave}
+                                            className="px-10 py-5 bg-blue-600 text-white rounded-[24px] font-black flex items-center gap-3 transition-all hover:bg-blue-700 active:scale-95 shadow-xl shadow-blue-600/30"
+                                        >
+                                            {isEditing ? 'Actualizar Riesgo' : 'Finalizar y Guardar'}
+                                            <Save className="w-5 h-5" />
+                                        </button>
                                     )}
                                 </div>
                             </div>
@@ -1189,16 +1076,45 @@ export default function RiskMatrixConfig() {
                                     </div>
 
                                     <div className="space-y-6">
-                                        <div className="flex justify-between items-center text-sm">
-                                            <span className="text-gray-400 font-medium">Inherente</span>
-                                            <span className={cn("font-black uppercase text-[10px] px-2 py-1 rounded-md", getRiskZone(inherentRisk).bg, getRiskZone(inherentRisk).color)}>
-                                                {getRiskZone(inherentRisk).label} ({inherentRisk})
-                                            </span>
+                                        <div className="flex justify-between items-center">
+                                            <h4 className="text-xs font-black uppercase tracking-widest text-gray-400">Escenario de Riesgo Residual</h4>
+                                            <div className="flex items-center gap-2">
+                                                <input 
+                                                    type="checkbox" 
+                                                    id="manualResidual"
+                                                    checked={config.manualResidual}
+                                                    onChange={(e) => setConfig(prev => ({ ...prev, manualResidual: e.target.checked }))}
+                                                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                                />
+                                                <label htmlFor="manualResidual" className="text-[10px] font-bold text-gray-500 uppercase">Ajuste Manual</label>
+                                            </div>
                                         </div>
-                                        <div className="flex justify-between items-center text-sm">
-                                            <span className="text-gray-400 font-medium">Controles</span>
-                                            <span className="text-blue-500 font-black">{config.mitigations.length}</span>
+
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div className="space-y-2">
+                                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-tighter">Probabilidad Residual</label>
+                                                <select 
+                                                    value={config.residualProbability}
+                                                    disabled={!config.manualResidual}
+                                                    onChange={(e) => setConfig(prev => ({ ...prev, residualProbability: parseInt(e.target.value) }))}
+                                                    className="w-full p-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-2xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 transition-all disabled:opacity-50"
+                                                >
+                                                    {[1, 2, 3, 4, 5].map(v => <option key={v} value={v}>{v}</option>)}
+                                                </select>
+                                            </div>
+                                            <div className="space-y-2">
+                                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-tighter">Impacto Residual</label>
+                                                <select 
+                                                    value={config.residualImpact}
+                                                    disabled={!config.manualResidual}
+                                                    onChange={(e) => setConfig(prev => ({ ...prev, residualImpact: parseInt(e.target.value) }))}
+                                                    className="w-full p-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-2xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 transition-all disabled:opacity-50"
+                                                >
+                                                    {[1, 5, 10, 15, 20].map(v => <option key={v} value={v}>{v}</option>)}
+                                                </select>
+                                            </div>
                                         </div>
+
                                         <div className="pt-6 border-t border-gray-100 dark:border-gray-700">
                                             <div className="flex justify-between items-end mb-2">
                                                 <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Riesgo Residual</span>
