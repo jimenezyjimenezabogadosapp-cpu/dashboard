@@ -72,6 +72,7 @@ interface RiskConfig {
     residualProbability: number;
     residualImpact: number;
     requiresImprovement: boolean;
+    justification: string;
     phva?: PHVA;
 }
 
@@ -281,7 +282,8 @@ export default function RiskMatrixConfig() {
         }],
         residualProbability: 2,
         residualImpact: 10,
-        requiresImprovement: false
+        requiresImprovement: false,
+        justification: ""
     });
 
     const isFirstRender = useRef(true);
@@ -527,16 +529,19 @@ export default function RiskMatrixConfig() {
     };
 
     const resetForm = () => {
+        const types = activeRiskTypes.current;
+        const catalog = activeCatalog.current;
+        
         setConfig({
             id: "",
             dependenceId: auth.dependenceId,
-            catalogRisk: CATALOG_BY_TYPE[RISK_TYPES[0]][0],
+            catalogRisk: catalog[types[0]] ? catalog[types[0]][0] : "PERSONALIZADO",
             customRiskName: "",
-            riskType: RISK_TYPES[0],
+            riskType: types[0],
             description: "",
             comment: "",
             probability: 3,
-            impact: 3,
+            impact: 10,
             justification: "",
             mitigations: [{ 
                 id: "1", 
@@ -665,7 +670,7 @@ export default function RiskMatrixConfig() {
                                                     {risk.dependence_name || "General"}
                                                 </td>
                                                 <td className="px-8 py-6 text-center">
-                                                    <span className={cn("px-3 py-1 rounded-full text-[10px] font-black uppercase", getRiskLevel(risk.impact * risk.probability).bg, getRiskLevel(risk.impact * risk.probability).color)}>
+                                                    <span className={cn("px-3 py-1 rounded-full text-[10px] font-black uppercase", getRiskZone(risk.impact * risk.probability).bg, getRiskZone(risk.impact * risk.probability).color)}>
                                                         {risk.impact * risk.probability}
                                                     </span>
                                                 </td>
