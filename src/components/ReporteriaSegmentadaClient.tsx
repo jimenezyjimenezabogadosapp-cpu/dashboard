@@ -81,7 +81,6 @@ export default function ReporteriaSegmentadaClient() {
     const [allDependencies, setAllDependencies] = useState<any[]>([]);
     const [trainingData, setTrainingData] = useState<any[]>([]);
 
-
     // Seguridad por Rol
     const auth = useMemo(() => {
         const rawRole = (searchParams.get("role_id") || "USER").toString().toUpperCase();
@@ -89,15 +88,18 @@ export default function ReporteriaSegmentadaClient() {
                      rawRole === "2" || rawRole === "ADMIN" ? "ADMIN" :
                      rawRole === "3" || rawRole === "TRAINER" ? "TRAINER" : "USER";
         const depId = searchParams.get("dependence_id") || "";
+        const userId = searchParams.get("user_id") || "";
         
         return {
             isSuper: role === "SUPER",
             role,
-            dependenceId: depId
+            dependenceId: depId,
+            userId
         };
     }, [searchParams]);
 
     const viewRole = auth.role;
+    const canSeeAll = searchParams.get("can_see_all") === "true";
 
     const EFFICACY_MAP: Record<string, { eff: number, nature: "Preventivo" | "Detectivo" }> = {
         "Verificación Automática en Listas Restrictivas": { eff: 0.85, nature: "Preventivo" },
@@ -202,7 +204,7 @@ export default function ReporteriaSegmentadaClient() {
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
                         SELECT rdt.name as "Riesgo", rdt.description as "Descripcion", rdt.status as "Estado", rat.description as "Accion"
                         FROM riesgos_judiciales_db.risk_data_tbl rdt inner join riesgos_judiciales_db.risk_action_tbl rat on rat.risk_id = rdt.id
-                        WHERE ${auth.isSuper && !matrixDepId ? '1=1' : `rat.dependence_id = '${targetDepId}'`}
+                        WHERE ${auth.isSuper ? '1=1' : `rat.dependence_id = '${auth.dependenceId}'`}
                     `)),
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
                         SELECT u.email as "Correo", u.name as "Nombre", u.area as "Area",
@@ -210,7 +212,10 @@ export default function ReporteriaSegmentadaClient() {
                         (SELECT COUNT(*) FROM training_tbl t WHERE t.status = 1) as "Total",
                         COALESCE((SELECT AVG(tp.score) FROM training_progress_tbl tp WHERE tp.userId = u.id), 0) as "Puntaje Promedio"
                         FROM users_app_tbl u
-                        WHERE ${(auth.isSuper && !matrixDepId) ? 'u.role = "STUDENT"' : `u.dependence_id = '${matrixDepId || auth.dependenceId}' AND u.role = "STUDENT"`}
+                        WHERE 
+                        ${(auth.role === 'SUPER' || (auth.role === 'TRAINER' && canSeeAll)) ? 'u.role = "STUDENT"' : 
+                          (auth.role === 'ADMIN' || auth.role === 'TRAINER') ? `u.dependence_id = '${auth.dependenceId}' AND u.role = "STUDENT"` :
+                          `u.id = '${auth.userId}'`}
                     `))
                 ]);
 
@@ -248,6 +253,9 @@ export default function ReporteriaSegmentadaClient() {
                     riskMatrix: { title: "POSICIONAMIENTO DE RIESGO DE LA DEPENDENCIA", points },
                     table: { title: "Análisis de Riesgos", columns: [{ key: "dependence_name", header: "Dependencia" }, { key: "alert_description", header: "Nivel" }, { key: "risk_count", header: "Riesgos" }, { key: "risk_score", header: "Score" }], rows: Array.isArray(tableD) ? tableD.map((r: any) => ({ ...r, risk_score: parseFloat(r.risk_score || 0).toFixed(2) })) : [] }
                 });
+
+                setRiskDetailsRows(Array.isArray(detailsD) ? detailsD : []);
+                setTrainingData(Array.isArray(trainingD) ? trainingD : []);
             } catch (err) {
                 setError(err instanceof Error ? err.message : "Error de carga");
             } finally {
@@ -314,7 +322,7 @@ export default function ReporteriaSegmentadaClient() {
                                         { id: "deps", label: "Dependencias", icon: List },
                                         { id: "inherent", label: "Riesgos Inherentes", icon: AlertTriangle },
                                         { id: "residual", label: "Riesgos Residuales", icon: Zap },
-                                        ...(viewRole !== "USER" ? [{ id: "training", label: "Capacitación", icon: GraduationCap }] : [])
+                                        { id: "training", label: "Capacitación", icon: GraduationCap }
                                     ].map((m) => (
 
                                         <button
@@ -355,14 +363,12 @@ export default function ReporteriaSegmentadaClient() {
                             <div className="space-y-6">
                                 <div className="flex items-center justify-between">
                                     <div>
-                                        <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100 uppercase tracking-tighter">Progreso de Capacitación por Cuenta</h3>
-                                        <p className="text-xs text-gray-400 font-bold uppercase tracking-tight">Seguimiento detallado de estudiantes</p>
+                                        <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100 uppercase tracking-tighter">Progreso de Capacitación</h3>
+                                        <p className="text-xs text-gray-400 font-bold uppercase tracking-tight">Seguimiento de estudiantes</p>
                                     </div>
-                                    <div className="flex items-center gap-4">
-                                        <div className="px-4 py-2 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-100 dark:border-blue-800">
-                                            <p className="text-[10px] text-blue-500 font-black uppercase">Total Estudiantes</p>
-                                            <p className="text-xl font-bold text-blue-600">{trainingData.length}</p>
-                                        </div>
+                                    <div className="px-4 py-2 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-100 dark:border-blue-800">
+                                        <p className="text-[10px] text-blue-500 font-black uppercase">Total Estudiantes</p>
+                                        <p className="text-xl font-bold text-blue-600">{trainingData.length}</p>
                                     </div>
                                 </div>
                                 <TableGeneric

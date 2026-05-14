@@ -109,11 +109,10 @@ export default function ReporteriaGeneralClient() {
     const [probFilter, setProbFilter] = useState<number[]>([1, 2, 3, 4, 5]);
     const [riskDetailsRows, setRiskDetailsRows] = useState<any[]>([]);
     const [matrixMode, setMatrixMode] = useState<"deps" | "inherent" | "residual" | "training">("deps");
-    const [trainingData, setTrainingData] = useState<any[]>([]);
-
     const [matrixDepId, setMatrixDepId] = useState<string>("");
     const [individualRisks, setIndividualRisks] = useState<any[]>([]);
     const [allDependencies, setAllDependencies] = useState<any[]>([]);
+    const [trainingData, setTrainingData] = useState<any[]>([]);
 
     const [globalDepId, setGlobalDepId] = useState<string>("");
     const [globalUserId, setGlobalUserId] = useState<string>("");
@@ -150,21 +149,28 @@ export default function ReporteriaGeneralClient() {
 
     const auth = useMemo(() => {
         const rawRole = (searchParams.get("role_id") || "USER").toString().toUpperCase();
+        const role = rawRole === "1" || rawRole === "SUPER" ? "SUPER" : 
+                     rawRole === "2" || rawRole === "ADMIN" ? "ADMIN" :
+                     rawRole === "3" || rawRole === "TRAINER" ? "TRAINER" : "USER";
         const depId = searchParams.get("dependence_id") || "";
         const uId = searchParams.get("user_id") || "";
         
-        const isSuper = rawRole === "1" || rawRole === "SUPER";
-        const isAdmin = rawRole === "2" || rawRole === "ADMIN";
-        const isUser = rawRole === "3" || rawRole === "USER";
-
-        return { isSuper, isAdmin, isUser, dependenceId: depId, userId: uId };
+        return { 
+            isSuper: role === "SUPER", 
+            isAdmin: role === "ADMIN", 
+            isTrainer: role === "TRAINER",
+            isUser: role === "USER",
+            role, 
+            dependenceId: depId, 
+            userId: uId 
+        };
     }, [searchParams]);
 
     useEffect(() => {
         if (isFirstRender.current) {
             setGlobalDepId(auth.dependenceId);
             setGlobalUserId(auth.isUser ? auth.userId : "");
-            setViewRole(auth.isSuper ? "SUPER" : (auth.isAdmin ? "ADMIN" : "USER"));
+            setViewRole(auth.role);
         }
     }, [auth]);
 
@@ -568,7 +574,10 @@ export default function ReporteriaGeneralClient() {
                         (SELECT COUNT(*) FROM training_tbl t WHERE t.status = 1) as "Total",
                         COALESCE((SELECT AVG(tp.score) FROM training_progress_tbl tp WHERE tp.userId = u.id), 0) as "Puntaje Promedio"
                         FROM users_app_tbl u
-                        WHERE ${(viewRole === 'SUPER' && !depId) ? 'u.role = "STUDENT"' : `u.dependence_id = '${depId || auth.dependenceId}' AND u.role = "STUDENT"`}
+                        WHERE 
+                        ${(viewRole === 'SUPER' || (viewRole === 'TRAINER' && searchParams.get("can_see_all") === "true")) ? 'u.role = "STUDENT"' : 
+                          (viewRole === 'ADMIN' || viewRole === 'TRAINER') ? `u.dependence_id = '${globalDepId || auth.dependenceId}' AND u.role = "STUDENT"` :
+                          `u.id = '${globalUserId || auth.userId}'`}
                     `))
                 ]);
 
@@ -1104,7 +1113,7 @@ export default function ReporteriaGeneralClient() {
                                                 { id: "deps", label: "Dependencias", icon: List },
                                                 { id: "inherent", label: "Riesgos Inherentes", icon: AlertTriangle },
                                                 { id: "residual", label: "Riesgos Residuales", icon: Zap },
-                                                ...(viewRole !== "USER" ? [{ id: "training", label: "Capacitación", icon: GraduationCap }] : [])
+                                                { id: "training", label: "Capacitación", icon: GraduationCap }
                                             ].map((m) => (
 
 
@@ -1246,14 +1255,12 @@ export default function ReporteriaGeneralClient() {
                                     <div className="space-y-6">
                                         <div className="flex items-center justify-between">
                                             <div>
-                                                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100 uppercase tracking-tighter">Progreso de Capacitación por Cuenta</h3>
-                                                <p className="text-xs text-gray-400 font-bold uppercase tracking-tight">Seguimiento detallado de estudiantes</p>
+                                                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100 uppercase tracking-tighter">Progreso de Capacitación</h3>
+                                                <p className="text-xs text-gray-400 font-bold uppercase tracking-tight">Seguimiento de estudiantes</p>
                                             </div>
-                                            <div className="flex items-center gap-4">
-                                                <div className="px-4 py-2 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-100 dark:border-blue-800">
-                                                    <p className="text-[10px] text-blue-500 font-black uppercase">Total Estudiantes</p>
-                                                    <p className="text-xl font-bold text-blue-600">{trainingData.length}</p>
-                                                </div>
+                                            <div className="px-4 py-2 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-100 dark:border-blue-800">
+                                                <p className="text-[10px] text-blue-500 font-black uppercase">Total Registros</p>
+                                                <p className="text-xl font-bold text-blue-600">{trainingData.length}</p>
                                             </div>
                                         </div>
                                         <TableGeneric
@@ -1291,7 +1298,7 @@ export default function ReporteriaGeneralClient() {
                                     </div>
                                 ) : (
                                     <RiskMatrixScatter
-                                        key={`${matrixMode}-${matrixDepId}-${points.map(p => p.id).join('-')}`} // Forzar re-render si cambian los puntos
+                                        key={`${matrixMode}-${matrixDepId}-${points.map(p => p.id).join('-')}`} 
                                         title={
                                             matrixMode === "deps" ? "Matriz de Riesgos por Dependencia" :
                                             matrixMode === "inherent" ? `Riesgos Inherentes: ${allDependencies.find(d => d.id === matrixDepId)?.name || ""}` :
@@ -1317,7 +1324,6 @@ export default function ReporteriaGeneralClient() {
                                                                 } else {
                                                                     (existing as any).maxImpEff = Math.max((existing as any).maxImpEff || 0, config.eff);
                                                                 }
-                                                                // Recalcular con los máximos encontrados hasta ahora
                                                                 const resImpact = r.impact * (1 - ((existing as any).maxImpEff || 0));
                                                                 const resProb = r.probability * (1 - ((existing as any).maxProbEff || 0));
                                                                 existing.x = Math.min(5, Math.max(1, (resImpact / 20) * 5));
