@@ -313,13 +313,19 @@ export default function RiskMatrixConfig() {
 
     useEffect(() => {
         if (!config.manualResidual) {
-            const avgEfficacy = config.mitigations.length > 0 
-                ? config.mitigations.reduce((acc, m) => acc + (m.efficacy || 0), 0) / config.mitigations.length 
+            const preventives = config.mitigations.filter(m => m.nature === "Preventivo");
+            const detectives = config.mitigations.filter(m => m.nature === "Detectivo");
+
+            const avgEfficacyProb = preventives.length > 0 
+                ? preventives.reduce((acc, m) => acc + (m.efficacy || 0), 0) / preventives.length 
+                : 0;
+            const avgEfficacyImpact = detectives.length > 0 
+                ? detectives.reduce((acc, m) => acc + (m.efficacy || 0), 0) / detectives.length 
                 : 0;
             
-            // Reducción proporcional
-            const redProb = Math.max(1, Math.ceil(config.probability * (1 - avgEfficacy)));
-            const redImpact = Math.max(1, Math.ceil(config.impact * (1 - avgEfficacy)));
+            // Reducción proporcional: Preventivos afectan Probabilidad, Detectivos afectan Impacto
+            const redProb = Math.max(1, Math.ceil(config.probability * (1 - avgEfficacyProb)));
+            const redImpact = Math.max(1, Math.ceil(config.impact * (1 - avgEfficacyImpact)));
 
             setConfig(prev => ({
                 ...prev,

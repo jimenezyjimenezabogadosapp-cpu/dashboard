@@ -211,8 +211,9 @@ export default function ReporteriaSegmentadaClient() {
 
                 const points = Array.isArray(matrixD) ? matrixD.map((row: any) => ({
                     id: row.id, name: row.name,
-                    x: Math.min(5, Math.max(1, parseFloat(row.x_impact || 1))),
-                    y: Math.min(5, Math.max(1, parseFloat(row.y_prob || 1)))
+                    // Normalización: Impacto (0-20) -> 1-5, Probabilidad (0-4) -> 1-5
+                    x: Math.min(5, Math.max(1, (parseFloat(row.x_impact || 1) / 20) * 5)),
+                    y: Math.min(5, Math.max(1, (parseFloat(row.y_prob || 1) / 4) * 5))
                 })) : [];
 
                 setRiskDetailsRows(Array.isArray(detailsD) ? detailsD : []);
@@ -342,8 +343,11 @@ export default function ReporteriaSegmentadaClient() {
                                                     } else {
                                                         (existing as any).maxImpEff = Math.max((existing as any).maxImpEff || 0, config.eff);
                                                     }
-                                                    existing.x = Math.max(1, Math.min(5, r.impact * (1 - ((existing as any).maxImpEff || 0))));
-                                                    existing.y = Math.max(1, Math.min(5, r.probability * (1 - ((existing as any).maxProbEff || 0))));
+                                                    // Recalcular con los máximos encontrados hasta ahora
+                                                    const resImpact = r.impact * (1 - ((existing as any).maxImpEff || 0));
+                                                    const resProb = r.probability * (1 - ((existing as any).maxProbEff || 0));
+                                                    existing.x = Math.min(5, Math.max(1, (resImpact / 20) * 5));
+                                                    existing.y = Math.min(5, Math.max(1, (resProb / 4) * 5));
                                                 }
                                                 return acc;
                                             }
@@ -351,11 +355,14 @@ export default function ReporteriaSegmentadaClient() {
                                             const probEff = matrixMode === "residual" && config.nature === "Preventivo" ? config.eff : 0;
                                             const impEff = matrixMode === "residual" && config.nature === "Detectivo" ? config.eff : 0;
 
+                                            const resImpact = matrixMode === "residual" ? r.impact * (1 - impEff) : r.impact;
+                                            const resProb = matrixMode === "residual" ? r.probability * (1 - probEff) : r.probability;
+
                                             const p: RiskPoint = {
                                                 id: r.id.toString(),
                                                 name: r.name,
-                                                x: matrixMode === "residual" ? Math.max(1, Math.min(5, r.impact * (1 - impEff))) : r.impact,
-                                                y: matrixMode === "residual" ? Math.max(1, Math.min(5, r.probability * (1 - probEff))) : r.probability
+                                                x: Math.min(5, Math.max(1, (resImpact / 20) * 5)),
+                                                y: Math.min(5, Math.max(1, (resProb / 4) * 5))
                                             };
                                             (p as any).maxProbEff = probEff;
                                             (p as any).maxImpEff = impEff;

@@ -594,8 +594,9 @@ export default function ReporteriaGeneralClient() {
 
                 const points = Array.isArray(matrixD) ? matrixD.map((row: any) => ({
                     id: row.id, name: row.name,
-                    x: Math.min(5, Math.max(1, parseFloat(row.x_impact || 1))),
-                    y: Math.min(5, Math.max(1, parseFloat(row.y_prob || 1)))
+                    // Normalización: Impacto (0-20) -> 1-5, Probabilidad (0-4) -> 1-5
+                    x: Math.min(5, Math.max(1, (parseFloat(row.x_impact || 1) / 20) * 5)),
+                    y: Math.min(5, Math.max(1, (parseFloat(row.y_prob || 1) / 4) * 5))
                 })) : [];
 
                 setPoints(points);
@@ -1097,6 +1098,20 @@ export default function ReporteriaGeneralClient() {
                                                 </button>
                                             ))}
                                         </div>
+
+                                        {/* Selector de Dependencia para modos Inherente/Residual */}
+                                        {matrixMode !== "deps" && (
+                                            <div className="animate-in fade-in zoom-in-95 duration-300">
+                                                <select
+                                                    disabled={!auth.isSuper}
+                                                    value={matrixDepId}
+                                                    onChange={(e) => setMatrixDepId(e.target.value)}
+                                                    className="px-4 py-2 bg-gray-100 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl text-[10px] font-black uppercase tracking-tighter outline-none focus:ring-2 focus:ring-blue-500 transition-all appearance-none pr-8 relative disabled:opacity-60"
+                                                >
+                                                    {allDependencies.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                                                </select>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
 
@@ -1229,8 +1244,11 @@ export default function ReporteriaGeneralClient() {
                                                             } else {
                                                                 (existing as any).maxImpEff = Math.max((existing as any).maxImpEff || 0, config.eff);
                                                             }
-                                                            existing.x = Math.max(1, Math.min(5, r.impact * (1 - ((existing as any).maxImpEff || 0))));
-                                                            existing.y = Math.max(1, Math.min(5, r.probability * (1 - ((existing as any).maxProbEff || 0))));
+                                                            // Recalcular con los máximos encontrados hasta ahora
+                                                            const resImpact = r.impact * (1 - ((existing as any).maxImpEff || 0));
+                                                            const resProb = r.probability * (1 - ((existing as any).maxProbEff || 0));
+                                                            existing.x = Math.min(5, Math.max(1, (resImpact / 20) * 5));
+                                                            existing.y = Math.min(5, Math.max(1, (resProb / 4) * 5));
                                                         }
                                                         return acc;
                                                     }
@@ -1238,11 +1256,14 @@ export default function ReporteriaGeneralClient() {
                                                     const probEff = matrixMode === "residual" && config.nature === "Preventivo" ? config.eff : 0;
                                                     const impEff = matrixMode === "residual" && config.nature === "Detectivo" ? config.eff : 0;
 
+                                                    const resImpact = matrixMode === "residual" ? r.impact * (1 - impEff) : r.impact;
+                                                    const resProb = matrixMode === "residual" ? r.probability * (1 - probEff) : r.probability;
+
                                                     const p: RiskPoint = {
                                                         id: r.id.toString(),
                                                         name: r.name,
-                                                        x: matrixMode === "residual" ? Math.max(1, Math.min(5, r.impact * (1 - impEff))) : r.impact,
-                                                        y: matrixMode === "residual" ? Math.max(1, Math.min(5, r.probability * (1 - probEff))) : r.probability
+                                                        x: Math.min(5, Math.max(1, (resImpact / 20) * 5)),
+                                                        y: Math.min(5, Math.max(1, (resProb / 4) * 5))
                                                     };
                                                     (p as any).maxProbEff = probEff;
                                                     (p as any).maxImpEff = impEff;
