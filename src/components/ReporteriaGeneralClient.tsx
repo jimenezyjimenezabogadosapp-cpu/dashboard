@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef } from "react";
-import { LayoutDashboard, List, AlertTriangle, Zap, Activity, ShieldAlert, Users, Clock, Database, Server, Terminal, Gauge } from "lucide-react";
+import { LayoutDashboard, List, AlertTriangle, Zap, Activity, ShieldAlert, Users, Clock, Database, Server, Terminal, Gauge, GraduationCap } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import KpiCard from "./dashboard/KpiCard";
 import ChartCard from "./dashboard/ChartCard";
@@ -108,10 +108,11 @@ export default function ReporteriaGeneralClient() {
     const [impactFilter, setImpactFilter] = useState<number[]>([1, 2, 3, 4, 5]);
     const [probFilter, setProbFilter] = useState<number[]>([1, 2, 3, 4, 5]);
     const [riskDetailsRows, setRiskDetailsRows] = useState<any[]>([]);
-    const [matrixMode, setMatrixMode] = useState<"deps" | "inherent" | "residual">("deps");
+    const [matrixMode, setMatrixMode] = useState<"deps" | "inherent" | "residual" | "training">("deps");
     const [matrixDepId, setMatrixDepId] = useState<string>("");
     const [individualRisks, setIndividualRisks] = useState<any[]>([]);
     const [allDependencies, setAllDependencies] = useState<any[]>([]);
+    const [trainingData, setTrainingData] = useState<any[]>([]);
 
     const [globalDepId, setGlobalDepId] = useState<string>("");
     const [globalUserId, setGlobalUserId] = useState<string>("");
@@ -148,21 +149,28 @@ export default function ReporteriaGeneralClient() {
 
     const auth = useMemo(() => {
         const rawRole = (searchParams.get("role_id") || "USER").toString().toUpperCase();
+        const role = rawRole === "1" || rawRole === "SUPER" ? "SUPER" : 
+                     rawRole === "2" || rawRole === "ADMIN" ? "ADMIN" :
+                     rawRole === "3" || rawRole === "TRAINER" ? "TRAINER" : "USER";
         const depId = searchParams.get("dependence_id") || "";
         const uId = searchParams.get("user_id") || "";
         
-        const isSuper = rawRole === "1" || rawRole === "SUPER";
-        const isAdmin = rawRole === "2" || rawRole === "ADMIN";
-        const isUser = rawRole === "3" || rawRole === "USER";
-
-        return { isSuper, isAdmin, isUser, dependenceId: depId, userId: uId };
+        return { 
+            isSuper: role === "SUPER", 
+            isAdmin: role === "ADMIN", 
+            isTrainer: role === "TRAINER",
+            isUser: role === "USER",
+            role, 
+            dependenceId: depId, 
+            userId: uId 
+        };
     }, [searchParams]);
 
     useEffect(() => {
         if (isFirstRender.current) {
             setGlobalDepId(auth.dependenceId);
             setGlobalUserId(auth.isUser ? auth.userId : "");
-            setViewRole(auth.isSuper ? "SUPER" : (auth.isAdmin ? "ADMIN" : "USER"));
+            setViewRole(auth.role);
         }
     }, [auth]);
 
@@ -535,7 +543,7 @@ export default function ReporteriaGeneralClient() {
                     `;
                 }
 
-                const [kpiRes, bar1Res, bar2Res, lineRes, pieRes, matrixRes, tableRes, detailsRes] = await Promise.all([
+                const [kpiRes, bar1Res, bar2Res, lineRes, pieRes, matrixRes, tableRes, detailsRes, trainingRes] = await Promise.all([
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(kpiQuery)),
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(bar1Query)),
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(bar2Query)),
@@ -559,11 +567,22 @@ export default function ReporteriaGeneralClient() {
                         SELECT rdt.name as "Riesgo", rdt.description as "Descripcion", rdt.status as "Estado", rat.description as "Accion"
                         FROM riesgos_judiciales_db.risk_data_tbl rdt inner join riesgos_judiciales_db.risk_action_tbl rat on rat.risk_id = rdt.id
                         WHERE ${auth.isSuper ? '1=1' : `rat.dependence_id = '${auth.dependenceId}'`}
+                    `)),
+                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
+                        SELECT u.email as "Correo", u.name as "Nombre", u.area as "Area",
+                        (SELECT COUNT(*) FROM training_progress_tbl tp WHERE tp.userId = u.id) as "Completados",
+                        (SELECT COUNT(*) FROM training_tbl t WHERE t.status = 1) as "Total",
+                        COALESCE((SELECT AVG(tp.score) FROM training_progress_tbl tp WHERE tp.userId = u.id), 0) as "Puntaje Promedio"
+                        FROM users_app_tbl u
+                        WHERE 
+                        ${(viewRole === 'SUPER' || (viewRole === 'TRAINER' && searchParams.get("can_see_all") === "true")) ? 'u.role = "STUDENT"' : 
+                          (viewRole === 'ADMIN' || viewRole === 'TRAINER') ? `u.dependence_id = '${globalDepId || auth.dependenceId}' AND u.role = "STUDENT"` :
+                          `u.id = '${globalUserId || auth.userId}'`}
                     `))
                 ]);
 
-                const [kpiD, bar1D, bar2D, lineD, pieD, matrixD, tableD, detailsD] = await Promise.all([
-                    kpiRes.json(), bar1Res.json(), bar2Res.json(), lineRes.json(), pieRes.json(), matrixRes.json(), tableRes.json(), detailsRes.json()
+                const [kpiD, bar1D, bar2D, lineD, pieD, matrixD, tableD, detailsD, trainingD] = await Promise.all([
+                    kpiRes.json(), bar1Res.json(), bar2Res.json(), lineRes.json(), pieRes.json(), matrixRes.json(), tableRes.json(), detailsRes.json(), trainingRes.json()
                 ]);
 
                 const kpis: KpiData[] = [];
@@ -602,6 +621,7 @@ export default function ReporteriaGeneralClient() {
                 setPoints(points);
                 setSelectedPoints(points.map(p => p.id));
                 setRiskDetailsRows(Array.isArray(detailsD) ? detailsD : []);
+                setTrainingData(Array.isArray(trainingD) ? trainingD : []);
 
                 const isSysView = auth.isSuper && (globalDepId === "ALL" || allDependencies.find(d => d.id === globalDepId)?.name.toLowerCase().includes("administración sistema"));
 
@@ -1081,7 +1101,8 @@ export default function ReporteriaGeneralClient() {
                                             {[
                                                 { id: "deps", label: "Dependencias", icon: List },
                                                 { id: "inherent", label: "Riesgos Inherentes", icon: AlertTriangle },
-                                                { id: "residual", label: "Riesgos Residuales", icon: Zap }
+                                                { id: "residual", label: "Riesgos Residuales", icon: Zap },
+                                                { id: "training", label: "Capacitación", icon: GraduationCap }
                                             ].map((m) => (
                                                 <button
                                                     key={m.id}
@@ -1217,61 +1238,107 @@ export default function ReporteriaGeneralClient() {
 
                             {/* Matriz de Riesgo */}
                             <div className="p-8 bg-gray-50/50 dark:bg-gray-900/20">
-                                <RiskMatrixScatter
-                                    key={`${matrixMode}-${matrixDepId}-${points.map(p => p.id).join('-')}`} // Forzar re-render si cambian los puntos
-                                    title={
-                                        matrixMode === "deps" ? "Matriz de Riesgos por Dependencia" :
-                                        matrixMode === "inherent" ? `Riesgos Inherentes: ${allDependencies.find(d => d.id === matrixDepId)?.name || ""}` :
-                                        `Riesgos Residuales: ${allDependencies.find(d => d.id === matrixDepId)?.name || ""}`
-                                    }
-                                    points={
-                                        matrixMode === "deps" 
-                                            ? points.filter(p => 
-                                                selectedPoints.includes(p.id) && 
-                                                impactFilter.includes(Math.round(p.x)) && 
-                                                probFilter.includes(Math.round(p.y))
-                                            )
-                                            : individualRisks
-                                                .filter(r => r.dependence_id === matrixDepId)
-                                                .reduce((acc: RiskPoint[], r) => {
-                                                    const existing = acc.find(a => a.id === r.id);
-                                                    const config = EFFICACY_MAP[r.control_type] || { eff: 0.1, nature: "Preventivo" };
+                                {matrixMode === "training" ? (
+                                    <div className="space-y-6">
+                                        <div className="flex items-center justify-between">
+                                            <div>
+                                                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100 uppercase tracking-tighter">Progreso de Capacitación</h3>
+                                                <p className="text-xs text-gray-400 font-bold uppercase tracking-tight">Seguimiento de estudiantes</p>
+                                            </div>
+                                            <div className="px-4 py-2 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-100 dark:border-blue-800">
+                                                <p className="text-[10px] text-blue-500 font-black uppercase">Total Registros</p>
+                                                <p className="text-xl font-bold text-blue-600">{trainingData.length}</p>
+                                            </div>
+                                        </div>
+                                        <TableGeneric
+                                            columns={[
+                                                { key: "Correo", header: "Correo Electrónico" },
+                                                { key: "Nombre", header: "Estudiante" },
+                                                { key: "Area", header: "Área" },
+                                                { key: "Completados", header: "Completados" },
+                                                { key: "Total", header: "Total Cursos" },
+                                                { key: "Puntaje Promedio", header: "Promedio" },
+                                                { 
+                                                    key: "Progreso", 
+                                                    header: "Progreso %",
+                                                    className: "w-48"
+                                                }
+                                            ]}
+                                            rows={trainingData.map(row => ({
+                                                ...row,
+                                                "Puntaje Promedio": parseFloat(row["Puntaje Promedio"]).toFixed(1),
+                                                "Progreso": (
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="flex-1 h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                                                            <div 
+                                                                className="h-full bg-blue-500 transition-all duration-500" 
+                                                                style={{ width: `${(row.Completados / Math.max(1, row.Total)) * 100}%` }}
+                                                            />
+                                                        </div>
+                                                        <span className="text-[10px] font-bold text-gray-500">
+                                                            {Math.round((row.Completados / Math.max(1, row.Total)) * 100)}%
+                                                        </span>
+                                                    </div>
+                                                )
+                                            }))}
+                                        />
+                                    </div>
+                                ) : (
+                                    <RiskMatrixScatter
+                                        key={`${matrixMode}-${matrixDepId}-${points.map(p => p.id).join('-')}`} 
+                                        title={
+                                            matrixMode === "deps" ? "Matriz de Riesgos por Dependencia" :
+                                            matrixMode === "inherent" ? `Riesgos Inherentes: ${allDependencies.find(d => d.id === matrixDepId)?.name || ""}` :
+                                            `Riesgos Residuales: ${allDependencies.find(d => d.id === matrixDepId)?.name || ""}`
+                                        }
+                                        points={
+                                            matrixMode === "deps" 
+                                                ? points.filter(p => 
+                                                    selectedPoints.includes(p.id) && 
+                                                    impactFilter.includes(Math.round(p.x)) && 
+                                                    probFilter.includes(Math.round(p.y))
+                                                )
+                                                : individualRisks
+                                                    .filter(r => r.dependence_id === matrixDepId)
+                                                    .reduce((acc: RiskPoint[], r) => {
+                                                        const existing = acc.find(a => a.id === r.id);
+                                                        const config = EFFICACY_MAP[r.control_type] || { eff: 0.1, nature: "Preventivo" };
 
-                                                    if (existing) {
-                                                        if (matrixMode === "residual") {
-                                                            if (config.nature === "Preventivo") {
-                                                                (existing as any).maxProbEff = Math.max((existing as any).maxProbEff || 0, config.eff);
-                                                            } else {
-                                                                (existing as any).maxImpEff = Math.max((existing as any).maxImpEff || 0, config.eff);
+                                                        if (existing) {
+                                                            if (matrixMode === "residual") {
+                                                                if (config.nature === "Preventivo") {
+                                                                    (existing as any).maxProbEff = Math.max((existing as any).maxProbEff || 0, config.eff);
+                                                                } else {
+                                                                    (existing as any).maxImpEff = Math.max((existing as any).maxImpEff || 0, config.eff);
+                                                                }
+                                                                const resImpact = r.impact * (1 - ((existing as any).maxImpEff || 0));
+                                                                const resProb = r.probability * (1 - ((existing as any).maxProbEff || 0));
+                                                                existing.x = Math.min(5, Math.max(1, (resImpact / 20) * 5));
+                                                                existing.y = Math.min(5, Math.max(1, (resProb / 4) * 5));
                                                             }
-                                                            // Recalcular con los máximos encontrados hasta ahora
-                                                            const resImpact = r.impact * (1 - ((existing as any).maxImpEff || 0));
-                                                            const resProb = r.probability * (1 - ((existing as any).maxProbEff || 0));
-                                                            existing.x = Math.min(5, Math.max(1, (resImpact / 20) * 5));
-                                                            existing.y = Math.min(5, Math.max(1, (resProb / 4) * 5));
+                                                            return acc;
                                                         }
+
+                                                        const probEff = matrixMode === "residual" && config.nature === "Preventivo" ? config.eff : 0;
+                                                        const impEff = matrixMode === "residual" && config.nature === "Detectivo" ? config.eff : 0;
+
+                                                        const resImpact = matrixMode === "residual" ? r.impact * (1 - impEff) : r.impact;
+                                                        const resProb = matrixMode === "residual" ? r.probability * (1 - probEff) : r.probability;
+
+                                                        const p: RiskPoint = {
+                                                            id: r.id.toString(),
+                                                            name: r.name,
+                                                            x: Math.min(5, Math.max(1, (resImpact / 20) * 5)),
+                                                            y: Math.min(5, Math.max(1, (resProb / 4) * 5))
+                                                        };
+                                                        (p as any).maxProbEff = probEff;
+                                                        (p as any).maxImpEff = impEff;
+                                                        acc.push(p);
                                                         return acc;
-                                                    }
-
-                                                    const probEff = matrixMode === "residual" && config.nature === "Preventivo" ? config.eff : 0;
-                                                    const impEff = matrixMode === "residual" && config.nature === "Detectivo" ? config.eff : 0;
-
-                                                    const resImpact = matrixMode === "residual" ? r.impact * (1 - impEff) : r.impact;
-                                                    const resProb = matrixMode === "residual" ? r.probability * (1 - probEff) : r.probability;
-
-                                                    const p: RiskPoint = {
-                                                        id: r.id.toString(),
-                                                        name: r.name,
-                                                        x: Math.min(5, Math.max(1, (resImpact / 20) * 5)),
-                                                        y: Math.min(5, Math.max(1, (resProb / 4) * 5))
-                                                    };
-                                                    (p as any).maxProbEff = probEff;
-                                                    (p as any).maxImpEff = impEff;
-                                                    acc.push(p);
-                                                    return acc;
-                                                }, [])
-                                    }
-                                />
+                                                    }, [])
+                                        }
+                                    />
+                                )}
                             </div>
                         </div>
 
