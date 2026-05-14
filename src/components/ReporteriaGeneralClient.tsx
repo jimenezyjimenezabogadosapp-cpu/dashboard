@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef } from "react";
-import { LayoutDashboard, List, AlertTriangle, Zap, Activity, ShieldAlert, Users, Clock, Database, Server, Terminal, Gauge } from "lucide-react";
+import { LayoutDashboard, List, AlertTriangle, Zap, Activity, ShieldAlert, Users, Clock, Database, Server, Terminal, Gauge, GraduationCap } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import KpiCard from "./dashboard/KpiCard";
 import ChartCard from "./dashboard/ChartCard";
@@ -108,7 +108,9 @@ export default function ReporteriaGeneralClient() {
     const [impactFilter, setImpactFilter] = useState<number[]>([1, 2, 3, 4, 5]);
     const [probFilter, setProbFilter] = useState<number[]>([1, 2, 3, 4, 5]);
     const [riskDetailsRows, setRiskDetailsRows] = useState<any[]>([]);
-    const [matrixMode, setMatrixMode] = useState<"deps" | "inherent" | "residual">("deps");
+    const [matrixMode, setMatrixMode] = useState<"deps" | "inherent" | "residual" | "training">("deps");
+    const [trainingData, setTrainingData] = useState<any[]>([]);
+
     const [matrixDepId, setMatrixDepId] = useState<string>("");
     const [individualRisks, setIndividualRisks] = useState<any[]>([]);
     const [allDependencies, setAllDependencies] = useState<any[]>([]);
@@ -535,7 +537,7 @@ export default function ReporteriaGeneralClient() {
                     `;
                 }
 
-                const [kpiRes, bar1Res, bar2Res, lineRes, pieRes, matrixRes, tableRes, detailsRes] = await Promise.all([
+                const [kpiRes, bar1Res, bar2Res, lineRes, pieRes, matrixRes, tableRes, detailsRes, trainingRes] = await Promise.all([
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(kpiQuery)),
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(bar1Query)),
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(bar2Query)),
@@ -549,7 +551,7 @@ export default function ReporteriaGeneralClient() {
                         COUNT(DISTINCT rdt.id) as risk_count, COALESCE(AVG(rdt.impact * rdt.probability), 0) as risk_score
                         FROM dependence_tbl dt
                         LEFT JOIN riesgos_judiciales_db.risk_action_tbl rat ON rat.dependence_id = dt.id
-                        LEFT JOIN riesgos_judiciales_db.risk_data_tbl rdt ON rat.risk_id = rdt.id
+                        LEFT JOIN riesgos_judiciales_db.risk_data_tbl rdt ON rdt.id = rat.risk_id
                         LEFT JOIN client_tbl ct ON ct.dependence_id = dt.id
                         LEFT JOIN alert_tbl a ON a.client_id = ct.id
                         WHERE ${(viewRole === 'SUPER' && !depId) ? '1=1' : `dt.id = '${depId || auth.dependenceId}'`}
@@ -559,12 +561,23 @@ export default function ReporteriaGeneralClient() {
                         SELECT rdt.name as "Riesgo", rdt.description as "Descripcion", rdt.status as "Estado", rat.description as "Accion"
                         FROM riesgos_judiciales_db.risk_data_tbl rdt inner join riesgos_judiciales_db.risk_action_tbl rat on rat.risk_id = rdt.id
                         WHERE ${auth.isSuper ? '1=1' : `rat.dependence_id = '${auth.dependenceId}'`}
+                    `)),
+                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
+                        SELECT u.email as "Correo", u.name as "Nombre", u.area as "Area",
+                        (SELECT COUNT(*) FROM training_progress_tbl tp WHERE tp.userId = u.id) as "Completados",
+                        (SELECT COUNT(*) FROM training_tbl t WHERE t.status = 1) as "Total",
+                        COALESCE((SELECT AVG(tp.score) FROM training_progress_tbl tp WHERE tp.userId = u.id), 0) as "Puntaje Promedio"
+                        FROM users_app_tbl u
+                        WHERE ${(viewRole === 'SUPER' && !depId) ? 'u.role = "STUDENT"' : `u.dependence_id = '${depId || auth.dependenceId}' AND u.role = "STUDENT"`}
                     `))
                 ]);
 
-                const [kpiD, bar1D, bar2D, lineD, pieD, matrixD, tableD, detailsD] = await Promise.all([
-                    kpiRes.json(), bar1Res.json(), bar2Res.json(), lineRes.json(), pieRes.json(), matrixRes.json(), tableRes.json(), detailsRes.json()
+                const [kpiD, bar1D, bar2D, lineD, pieD, matrixD, tableD, detailsD, trainingD] = await Promise.all([
+                    kpiRes.json(), bar1Res.json(), bar2Res.json(), lineRes.json(), pieRes.json(), matrixRes.json(), tableRes.json(), detailsRes.json(), trainingRes.json()
                 ]);
+
+                console.log("Training Metrics Data:", trainingD);
+
 
                 const kpis: KpiData[] = [];
                 // Normalización de datos (Soporte para Array o {results: []})
@@ -602,6 +615,7 @@ export default function ReporteriaGeneralClient() {
                 setPoints(points);
                 setSelectedPoints(points.map(p => p.id));
                 setRiskDetailsRows(Array.isArray(detailsD) ? detailsD : []);
+                setTrainingData(Array.isArray(trainingD) ? trainingD : []);
 
                 const isSysView = auth.isSuper && (globalDepId === "ALL" || allDependencies.find(d => d.id === globalDepId)?.name.toLowerCase().includes("administración sistema"));
 
@@ -691,7 +705,15 @@ export default function ReporteriaGeneralClient() {
         }
 
         fetchData();
-    }, [auth, globalDepId, globalUserId, viewRole, matrixMode, datePeriod, dateFrom, dateTo]); // NO incluir viewType ni dimension aqui
+    }, [auth, globalDepId, globalUserId, viewRole, matrixMode, datePeriod, dateFrom, dateTo]);
+
+    useEffect(() => {
+        const depName = allDependencies.find(d => d.id === globalDepId)?.name.toUpperCase() || "";
+        const isEstudiantes = depName.includes("ESTUDIANTES") || depName.includes("SERGIO ARBOLEDA");
+        if (isEstudiantes && matrixMode === "deps" && activeTab === "operacion") {
+            setMatrixMode("training");
+        }
+    }, [globalDepId, allDependencies, activeTab]);
 
     // useEffect SEPARADO solo para segmentación — no recarga la página entera
     useEffect(() => {
@@ -1081,8 +1103,11 @@ export default function ReporteriaGeneralClient() {
                                             {[
                                                 { id: "deps", label: "Dependencias", icon: List },
                                                 { id: "inherent", label: "Riesgos Inherentes", icon: AlertTriangle },
-                                                { id: "residual", label: "Riesgos Residuales", icon: Zap }
+                                                { id: "residual", label: "Riesgos Residuales", icon: Zap },
+                                                ...(viewRole !== "USER" ? [{ id: "training", label: "Capacitación", icon: GraduationCap }] : [])
                                             ].map((m) => (
+
+
                                                 <button
                                                     key={m.id}
                                                     onClick={() => setMatrixMode(m.id as any)}
@@ -1217,61 +1242,110 @@ export default function ReporteriaGeneralClient() {
 
                             {/* Matriz de Riesgo */}
                             <div className="p-8 bg-gray-50/50 dark:bg-gray-900/20">
-                                <RiskMatrixScatter
-                                    key={`${matrixMode}-${matrixDepId}-${points.map(p => p.id).join('-')}`} // Forzar re-render si cambian los puntos
-                                    title={
-                                        matrixMode === "deps" ? "Matriz de Riesgos por Dependencia" :
-                                        matrixMode === "inherent" ? `Riesgos Inherentes: ${allDependencies.find(d => d.id === matrixDepId)?.name || ""}` :
-                                        `Riesgos Residuales: ${allDependencies.find(d => d.id === matrixDepId)?.name || ""}`
-                                    }
-                                    points={
-                                        matrixMode === "deps" 
-                                            ? points.filter(p => 
-                                                selectedPoints.includes(p.id) && 
-                                                impactFilter.includes(Math.round(p.x)) && 
-                                                probFilter.includes(Math.round(p.y))
-                                            )
-                                            : individualRisks
-                                                .filter(r => r.dependence_id === matrixDepId)
-                                                .reduce((acc: RiskPoint[], r) => {
-                                                    const existing = acc.find(a => a.id === r.id);
-                                                    const config = EFFICACY_MAP[r.control_type] || { eff: 0.1, nature: "Preventivo" };
+                                {matrixMode === "training" ? (
+                                    <div className="space-y-6">
+                                        <div className="flex items-center justify-between">
+                                            <div>
+                                                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100 uppercase tracking-tighter">Progreso de Capacitación por Cuenta</h3>
+                                                <p className="text-xs text-gray-400 font-bold uppercase tracking-tight">Seguimiento detallado de estudiantes</p>
+                                            </div>
+                                            <div className="flex items-center gap-4">
+                                                <div className="px-4 py-2 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-100 dark:border-blue-800">
+                                                    <p className="text-[10px] text-blue-500 font-black uppercase">Total Estudiantes</p>
+                                                    <p className="text-xl font-bold text-blue-600">{trainingData.length}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <TableGeneric
+                                            columns={[
+                                                { key: "Correo", header: "Correo Electrónico" },
+                                                { key: "Nombre", header: "Estudiante" },
+                                                { key: "Area", header: "Área" },
+                                                { key: "Completados", header: "Completados" },
+                                                { key: "Total", header: "Total Cursos" },
+                                                { key: "Puntaje Promedio", header: "Promedio" },
+                                                { 
+                                                    key: "Progreso", 
+                                                    header: "Progreso %",
+                                                    className: "w-48"
+                                                }
+                                            ]}
+                                            rows={trainingData.map(row => ({
+                                                ...row,
+                                                "Puntaje Promedio": parseFloat(row["Puntaje Promedio"]).toFixed(1),
+                                                "Progreso": (
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="flex-1 h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                                                            <div 
+                                                                className="h-full bg-blue-500 transition-all duration-500" 
+                                                                style={{ width: `${(row.Completados / Math.max(1, row.Total)) * 100}%` }}
+                                                            />
+                                                        </div>
+                                                        <span className="text-[10px] font-bold text-gray-500">
+                                                            {Math.round((row.Completados / Math.max(1, row.Total)) * 100)}%
+                                                        </span>
+                                                    </div>
+                                                )
+                                            }))}
+                                        />
+                                    </div>
+                                ) : (
+                                    <RiskMatrixScatter
+                                        key={`${matrixMode}-${matrixDepId}-${points.map(p => p.id).join('-')}`} // Forzar re-render si cambian los puntos
+                                        title={
+                                            matrixMode === "deps" ? "Matriz de Riesgos por Dependencia" :
+                                            matrixMode === "inherent" ? `Riesgos Inherentes: ${allDependencies.find(d => d.id === matrixDepId)?.name || ""}` :
+                                            `Riesgos Residuales: ${allDependencies.find(d => d.id === matrixDepId)?.name || ""}`
+                                        }
+                                        points={
+                                            matrixMode === "deps" 
+                                                ? points.filter(p => 
+                                                    selectedPoints.includes(p.id) && 
+                                                    impactFilter.includes(Math.round(p.x)) && 
+                                                    probFilter.includes(Math.round(p.y))
+                                                )
+                                                : individualRisks
+                                                    .filter(r => r.dependence_id === matrixDepId)
+                                                    .reduce((acc: RiskPoint[], r) => {
+                                                        const existing = acc.find(a => a.id === r.id);
+                                                        const config = EFFICACY_MAP[r.control_type] || { eff: 0.1, nature: "Preventivo" };
 
-                                                    if (existing) {
-                                                        if (matrixMode === "residual") {
-                                                            if (config.nature === "Preventivo") {
-                                                                (existing as any).maxProbEff = Math.max((existing as any).maxProbEff || 0, config.eff);
-                                                            } else {
-                                                                (existing as any).maxImpEff = Math.max((existing as any).maxImpEff || 0, config.eff);
+                                                        if (existing) {
+                                                            if (matrixMode === "residual") {
+                                                                if (config.nature === "Preventivo") {
+                                                                    (existing as any).maxProbEff = Math.max((existing as any).maxProbEff || 0, config.eff);
+                                                                } else {
+                                                                    (existing as any).maxImpEff = Math.max((existing as any).maxImpEff || 0, config.eff);
+                                                                }
+                                                                // Recalcular con los máximos encontrados hasta ahora
+                                                                const resImpact = r.impact * (1 - ((existing as any).maxImpEff || 0));
+                                                                const resProb = r.probability * (1 - ((existing as any).maxProbEff || 0));
+                                                                existing.x = Math.min(5, Math.max(1, (resImpact / 20) * 5));
+                                                                existing.y = Math.min(5, Math.max(1, (resProb / 4) * 5));
                                                             }
-                                                            // Recalcular con los máximos encontrados hasta ahora
-                                                            const resImpact = r.impact * (1 - ((existing as any).maxImpEff || 0));
-                                                            const resProb = r.probability * (1 - ((existing as any).maxProbEff || 0));
-                                                            existing.x = Math.min(5, Math.max(1, (resImpact / 20) * 5));
-                                                            existing.y = Math.min(5, Math.max(1, (resProb / 4) * 5));
+                                                            return acc;
                                                         }
+
+                                                        const probEff = matrixMode === "residual" && config.nature === "Preventivo" ? config.eff : 0;
+                                                        const impEff = matrixMode === "residual" && config.nature === "Detectivo" ? config.eff : 0;
+
+                                                        const resImpact = matrixMode === "residual" ? r.impact * (1 - impEff) : r.impact;
+                                                        const resProb = matrixMode === "residual" ? r.probability * (1 - probEff) : r.probability;
+
+                                                        const p: RiskPoint = {
+                                                            id: r.id.toString(),
+                                                            name: r.name,
+                                                            x: Math.min(5, Math.max(1, (resImpact / 20) * 5)),
+                                                            y: Math.min(5, Math.max(1, (resProb / 4) * 5))
+                                                        };
+                                                        (p as any).maxProbEff = probEff;
+                                                        (p as any).maxImpEff = impEff;
+                                                        acc.push(p);
                                                         return acc;
-                                                    }
-
-                                                    const probEff = matrixMode === "residual" && config.nature === "Preventivo" ? config.eff : 0;
-                                                    const impEff = matrixMode === "residual" && config.nature === "Detectivo" ? config.eff : 0;
-
-                                                    const resImpact = matrixMode === "residual" ? r.impact * (1 - impEff) : r.impact;
-                                                    const resProb = matrixMode === "residual" ? r.probability * (1 - probEff) : r.probability;
-
-                                                    const p: RiskPoint = {
-                                                        id: r.id.toString(),
-                                                        name: r.name,
-                                                        x: Math.min(5, Math.max(1, (resImpact / 20) * 5)),
-                                                        y: Math.min(5, Math.max(1, (resProb / 4) * 5))
-                                                    };
-                                                    (p as any).maxProbEff = probEff;
-                                                    (p as any).maxImpEff = impEff;
-                                                    acc.push(p);
-                                                    return acc;
-                                                }, [])
-                                    }
-                                />
+                                                    }, [])
+                                        }
+                                    />
+                                )}
                             </div>
                         </div>
 
@@ -1479,37 +1553,76 @@ export default function ReporteriaGeneralClient() {
                                     />
                                 </ChartCard>
                             </div>
-                        ) : viewRole === "USER" ? (
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-                                <ChartCard title="Desempeño vs Equipo (T. Ejecución)">
-                                    <div className="h-64">
-                                        <GaugeChartGeneric 
-                                            value={Math.round((data.barChart1.data.find(d => d.label === 'Mio')?.value / data.barChart1.data.find(d => d.label === 'Equipo')?.value) * 100) || 85} 
-                                            label="Eficiencia de Caso"
-                                            color="#10b981"
+                        ) : (viewRole === "USER" || viewRole === "TRAINER") ? (
+                            <div className="grid grid-cols-1 gap-8">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+                                    <ChartCard title="Desempeño vs Equipo (T. Ejecución)">
+                                        <div className="h-64">
+                                            <GaugeChartGeneric 
+                                                value={Math.round((data.barChart1.data.find(d => d.label === 'Mio')?.value / data.barChart1.data.find(d => d.label === 'Equipo')?.value) * 100) || 85} 
+                                                label="Eficiencia de Caso"
+                                                color="#10b981"
+                                            />
+                                        </div>
+                                        <p className="text-[10px] text-center text-gray-400 font-bold mt-4 uppercase">Tu velocidad de respuesta es superior al 85% del equipo</p>
+                                    </ChartCard>
+                                    <ChartCard title="Estado de Mis Capacitaciones">
+                                        <div className="space-y-6 p-4">
+                                            {[
+                                                { name: "Prevención SARLAFT", prog: 100 },
+                                                { name: "Debida Diligencia", prog: 60 },
+                                                { name: "Uso de la Plataforma", prog: 90 }
+                                            ].map((c, i) => (
+                                                <div key={i} className="space-y-2">
+                                                    <div className="flex justify-between text-[10px] font-black uppercase tracking-tighter">
+                                                        <span className="text-gray-900 dark:text-gray-100">{c.name}</span>
+                                                        <span className="text-blue-500">{c.prog}%</span>
+                                                    </div>
+                                                    <div className="h-2 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+                                                        <div className="h-full bg-blue-500 transition-all duration-1000" style={{ width: `${c.prog}%` }} />
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </ChartCard>
+                                </div>
+
+                                {viewRole === "TRAINER" && (
+                                    <ChartCard title="Gestión de Estudiantes (Capacitación)">
+                                        <TableGeneric
+                                            columns={[
+                                                { key: "Correo", header: "Correo Electrónico" },
+                                                { key: "Nombre", header: "Estudiante" },
+                                                { key: "Area", header: "Área" },
+                                                { key: "Completados", header: "Completados" },
+                                                { key: "Total", header: "Total Cursos" },
+                                                { key: "Puntaje Promedio", header: "Promedio" },
+                                                { 
+                                                    key: "Progreso", 
+                                                    header: "Progreso %",
+                                                    className: "w-48"
+                                                }
+                                            ]}
+                                            rows={trainingData.map(row => ({
+                                                ...row,
+                                                "Puntaje Promedio": parseFloat(row["Puntaje Promedio"]).toFixed(1),
+                                                "Progreso": (
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="flex-1 h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                                                            <div 
+                                                                className="h-full bg-blue-500 transition-all duration-500" 
+                                                                style={{ width: `${(row.Completados / Math.max(1, row.Total)) * 100}%` }}
+                                                            />
+                                                        </div>
+                                                        <span className="text-[10px] font-bold text-gray-500">
+                                                            {Math.round((row.Completados / Math.max(1, row.Total)) * 100)}%
+                                                        </span>
+                                                    </div>
+                                                )
+                                            }))}
                                         />
-                                    </div>
-                                    <p className="text-[10px] text-center text-gray-400 font-bold mt-4 uppercase">Tu velocidad de respuesta es superior al 85% del equipo</p>
-                                </ChartCard>
-                                <ChartCard title="Estado de Mis Capacitaciones">
-                                    <div className="space-y-6 p-4">
-                                        {[
-                                            { name: "Prevención SARLAFT", prog: 100 },
-                                            { name: "Debida Diligencia", prog: 60 },
-                                            { name: "Uso de la Plataforma", prog: 90 }
-                                        ].map((c, i) => (
-                                            <div key={i} className="space-y-2">
-                                                <div className="flex justify-between text-[10px] font-black uppercase tracking-tighter">
-                                                    <span className="text-gray-900 dark:text-gray-100">{c.name}</span>
-                                                    <span className="text-blue-500">{c.prog}%</span>
-                                                </div>
-                                                <div className="h-2 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
-                                                    <div className="h-full bg-blue-500 transition-all duration-1000" style={{ width: `${c.prog}%` }} />
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </ChartCard>
+                                    </ChartCard>
+                                )}
                             </div>
                         ) : (
                             <div className="grid grid-cols-1 gap-8 mb-8">
@@ -1524,8 +1637,44 @@ export default function ReporteriaGeneralClient() {
                                         rows={data.barChart1.data.map(d => ({ ...d, time: "2.5 min", status: "Activo" }))} 
                                     />
                                 </ChartCard>
+
+                                <ChartCard title="Métricas de Capacitación Estudiantil">
+                                    <TableGeneric
+                                        columns={[
+                                            { key: "Correo", header: "Correo Electrónico" },
+                                            { key: "Nombre", header: "Estudiante" },
+                                            { key: "Area", header: "Área" },
+                                            { key: "Completados", header: "Completados" },
+                                            { key: "Total", header: "Total Cursos" },
+                                            { key: "Puntaje Promedio", header: "Promedio" },
+                                            { 
+                                                key: "Progreso", 
+                                                header: "Progreso %",
+                                                className: "w-48"
+                                            }
+                                        ]}
+                                        rows={trainingData.map(row => ({
+                                            ...row,
+                                            "Puntaje Promedio": parseFloat(row["Puntaje Promedio"]).toFixed(1),
+                                            "Progreso": (
+                                                <div className="flex items-center gap-2">
+                                                    <div className="flex-1 h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                                                        <div 
+                                                            className="h-full bg-blue-500 transition-all duration-500" 
+                                                            style={{ width: `${(row.Completados / Math.max(1, row.Total)) * 100}%` }}
+                                                        />
+                                                    </div>
+                                                    <span className="text-[10px] font-bold text-gray-500">
+                                                        {Math.round((row.Completados / Math.max(1, row.Total)) * 100)}%
+                                                    </span>
+                                                </div>
+                                            )
+                                        }))}
+                                    />
+                                </ChartCard>
                             </div>
                         )}
+
                     </div>
                 )}
             </div>
