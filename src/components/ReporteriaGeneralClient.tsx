@@ -833,7 +833,8 @@ export default function ReporteriaGeneralClient() {
                 }
             };
 
-            const response = await fetch('http://localhost:5001/reports/dashboard', {
+            const reportsUrl = process.env.NEXT_PUBLIC_REPORTS_URL;
+            const response = await fetch(`${reportsUrl}/reports/dashboard`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
