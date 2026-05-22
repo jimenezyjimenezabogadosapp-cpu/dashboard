@@ -502,8 +502,8 @@ export default function RiskMatrixConfig() {
                 riskType: risk.type || activeRiskTypes.current[0],
                 description: risk.description || "",
                 comment: risk.comments || "",
-                probability: risk.probability || 3,
-                impact: risk.impact || 3,
+                probability: Number(risk.probability) || 3,
+                impact: Number(risk.impact) || 3,
                 justification: risk.comments || "",
                 mitigations: mitigations.length > 0 ? mitigations : [{ 
                     id: "1", 
@@ -518,8 +518,8 @@ export default function RiskMatrixConfig() {
                 context: [],
                 associatedImpacts: [],
                 treatment: TREATMENT_OPTIONS[1],
-                residualProbability: risk.residual_probability || 2,
-                residualImpact: risk.residual_impact || 10,
+                residualProbability: Number(risk.residual_probability) || 2,
+                residualImpact: Number(risk.residual_impact) || 10,
                 requiresImprovement: false,
                 manualResidual: true
             });
@@ -636,6 +636,7 @@ export default function RiskMatrixConfig() {
     const residualRisk = config.residualImpact * config.residualProbability;
     
     const getRiskZone = (score: number) => {
+        if (isNaN(score) || score === null || score === undefined) return { label: "N/A", color: "text-gray-400", bg: "bg-gray-400/10", zone: "Gris" };
         if (score <= 5) return { label: "Zona Aceptable", color: "text-green-500", bg: "bg-green-500/10", zone: "Verde" };
         if (score <= 10) return { label: "Zona Tolerable", color: "text-yellow-500", bg: "bg-yellow-500/10", zone: "Amarillo" };
         if (score <= 15) return { label: "Zona Moderada", color: "text-orange-400", bg: "bg-orange-400/10", zone: "Naranja Claro" };
@@ -725,35 +726,44 @@ export default function RiskMatrixConfig() {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                                        {filteredRisks.map((risk) => (
-                                            <tr key={risk.id} className="hover:bg-gray-50 dark:hover:bg-gray-900/30 transition-colors">
-                                                <td className="px-8 py-6">
-                                                    <div className="font-bold text-gray-900 dark:text-white">{risk.name || risk.risk_name}</div>
-                                                    <div className="text-[10px] text-gray-400 mt-1 uppercase">{risk.status}</div>
-                                                </td>
-                                                <td className="px-8 py-6 text-sm text-gray-500 dark:text-gray-400">
-                                                    {risk.dependence_name || "General"}
-                                                </td>
-                                                <td className="px-8 py-6 text-center">
-                                                    <span className={cn("px-3 py-1 rounded-full text-[10px] font-black uppercase", getRiskZone(risk.impact * risk.probability).bg, getRiskZone(risk.impact * risk.probability).color)}>
-                                                        {risk.impact * risk.probability}
-                                                    </span>
-                                                </td>
-                                                <td className="px-8 py-6 text-center">
-                                                    <span className={cn("px-3 py-1 rounded-full text-[10px] font-black uppercase", getRiskZone(risk.residual_impact * risk.residual_probability).bg, getRiskZone(risk.residual_impact * risk.residual_probability).color)}>
-                                                        {risk.residual_impact * risk.residual_probability}
-                                                    </span>
-                                                </td>
-                                                <td className="px-8 py-6 text-right">
-                                                    <button 
-                                                        onClick={() => handleEditRisk(risk)}
-                                                        className="p-2 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-blue-500 rounded-xl transition-all active:scale-90"
-                                                    >
-                                                        <Edit3 className="w-5 h-5" />
-                                                    </button>
-                                                </td>
-                                            </tr>
-                                        ))}
+                                        {filteredRisks.map((risk) => {
+                                            const inherentScore = (risk.impact && risk.probability) ? (Number(risk.impact) * Number(risk.probability)) : NaN;
+                                            const residualScore = (risk.residual_impact && risk.residual_probability) ? (Number(risk.residual_impact) * Number(risk.residual_probability)) : NaN;
+                                            const inherentScoreStr = isNaN(inherentScore) ? "N/A" : inherentScore.toString();
+                                            const residualScoreStr = isNaN(residualScore) ? "N/A" : residualScore.toString();
+                                            const inherentZone = getRiskZone(inherentScore);
+                                            const residualZone = getRiskZone(residualScore);
+
+                                            return (
+                                                <tr key={risk.id} className="hover:bg-gray-50 dark:hover:bg-gray-900/30 transition-colors">
+                                                    <td className="px-8 py-6">
+                                                        <div className="font-bold text-gray-900 dark:text-white">{risk.name || risk.risk_name}</div>
+                                                        <div className="text-[10px] text-gray-400 mt-1 uppercase">{risk.status}</div>
+                                                    </td>
+                                                    <td className="px-8 py-6 text-sm text-gray-500 dark:text-gray-400">
+                                                        {risk.dependence_name || "General"}
+                                                    </td>
+                                                    <td className="px-8 py-6 text-center">
+                                                        <span className={cn("px-3 py-1 rounded-full text-[10px] font-black uppercase", inherentZone.bg, inherentZone.color)}>
+                                                            {inherentScoreStr}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-8 py-6 text-center">
+                                                        <span className={cn("px-3 py-1 rounded-full text-[10px] font-black uppercase", residualZone.bg, residualZone.color)}>
+                                                            {residualScoreStr}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-8 py-6 text-right">
+                                                        <button 
+                                                            onClick={() => handleEditRisk(risk)}
+                                                            className="p-2 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-blue-500 rounded-xl transition-all active:scale-90"
+                                                        >
+                                                            <Edit3 className="w-5 h-5" />
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
                                     </tbody>
                                 </table>
                             </div>
