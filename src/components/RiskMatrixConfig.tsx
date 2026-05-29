@@ -484,9 +484,9 @@ export default function RiskMatrixConfig() {
                 const ctMatch = CONTROL_TYPES.find(ct => ct.name === a.type);
                 return {
                     id: a.id.toString(),
-                    controlType: a.type || "OTRO (PERSONALIZADO)",
+                    controlType: ctMatch ? a.type : "OTRO (PERSONALIZADO)",
                     nature: ctMatch ? ctMatch.nature : "Preventivo",
-                    customControlName: a.type || "",
+                    customControlName: ctMatch ? "" : (a.type || ""),
                     description: a.description,
                     efficacy: ctMatch ? ctMatch.efficacy : 0.5,
                     responsible: a.person || "",
@@ -558,6 +558,34 @@ export default function RiskMatrixConfig() {
                         params: [riskPayload.name, riskPayload.description, riskPayload.impact, riskPayload.probability, riskPayload.residual_impact, riskPayload.residual_probability, config.id]
                     })
                 });
+
+                // Update mitigations by deleting existing ones and inserting the new ones
+                await fetch(`/api/sql?x-user-key=${userKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sql: `DELETE FROM riesgos_judiciales_db.risk_action_tbl WHERE risk_id = ?`,
+                        params: [config.id]
+                    })
+                });
+                
+                for (const mitigation of config.mitigations) {
+                    await fetch(`/api/sql?x-user-key=${userKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            sql: `INSERT INTO riesgos_judiciales_db.risk_action_tbl (risk_id, description, type, person, dependence_id, status) VALUES (?, ?, ?, ?, ?, ?)`,
+                            params: [
+                                config.id, 
+                                mitigation.description || '', 
+                                mitigation.controlType === 'OTRO (PERSONALIZADO)' ? mitigation.customControlName : mitigation.controlType || '', 
+                                mitigation.responsible || '', 
+                                config.dependenceId, 
+                                'ACTIVO'
+                            ]
+                        })
+                    });
+                }
             } else {
                 const res = await fetch(`/api/sql?x-user-key=${userKey}`, {
                     method: 'POST',
@@ -571,14 +599,23 @@ export default function RiskMatrixConfig() {
                 const newId = data.data.insertId;
 
                 if (newId) {
-                    await fetch(`/api/sql?x-user-key=${userKey}`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            sql: `INSERT INTO riesgos_judiciales_db.risk_action_tbl (risk_id, description, type, person, dependence_id, status) VALUES (?, ?, ?, ?, ?, ?)`,
-                            params: [newId, config.mitigations[0]?.description || '', config.mitigations[0]?.controlType || '', config.mitigations[0]?.responsible || '', config.dependenceId, 'ACTIVO']
-                        })
-                    });
+                    for (const mitigation of config.mitigations) {
+                        await fetch(`/api/sql?x-user-key=${userKey}`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                sql: `INSERT INTO riesgos_judiciales_db.risk_action_tbl (risk_id, description, type, person, dependence_id, status) VALUES (?, ?, ?, ?, ?, ?)`,
+                                params: [
+                                    newId, 
+                                    mitigation.description || '', 
+                                    mitigation.controlType === 'OTRO (PERSONALIZADO)' ? mitigation.customControlName : mitigation.controlType || '', 
+                                    mitigation.responsible || '', 
+                                    config.dependenceId, 
+                                    'ACTIVO'
+                                ]
+                            })
+                        });
+                    }
                 }
             }
 
@@ -999,6 +1036,20 @@ export default function RiskMatrixConfig() {
                                                                 {CONTROL_TYPES.map(ct => <option key={ct.name} value={ct.name}>{ct.name}</option>)}
                                                             </select>
                                                         </div>
+                                                        {mitigation.controlType === "OTRO (PERSONALIZADO)" && (
+                                                            <div className="space-y-4 md:col-span-1 animate-in slide-in-from-top-2 duration-300">
+                                                                <label className="text-[10px] font-black text-blue-500 uppercase tracking-widest ml-1 flex items-center gap-2">
+                                                                    <PlusCircle className="w-3 h-3" /> Nombre del Control Personalizado
+                                                                </label>
+                                                                <input 
+                                                                    type="text"
+                                                                    value={mitigation.customControlName}
+                                                                    onChange={(e) => handleMitigationChange(mitigation.id, "customControlName", e.target.value)}
+                                                                    placeholder="Nombre del control..."
+                                                                    className="w-full px-5 py-4 bg-blue-50/30 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-800 rounded-2xl focus:ring-4 focus:ring-blue-500/20 outline-none transition-all text-sm dark:text-white"
+                                                                />
+                                                            </div>
+                                                        )}
                                                         <div className="space-y-4">
                                                             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Área Responsable</label>
                                                             <input 
