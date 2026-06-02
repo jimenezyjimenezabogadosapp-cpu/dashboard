@@ -4,14 +4,14 @@ import { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "./theme-toggle";
-import { 
-    ChevronRight, 
+import {
+    ChevronRight,
     ChevronLeft,
-    Save, 
-    Plus, 
-    Trash2, 
-    AlertTriangle, 
-    ShieldCheck, 
+    Save,
+    Plus,
+    Trash2,
+    AlertTriangle,
+    ShieldCheck,
     Info,
     LayoutDashboard,
     Settings,
@@ -116,7 +116,10 @@ const SERGIO_ARBOLEDA_RISK_TYPES = [
     "PTEE — Beneficios Indebidos / Donaciones Condicionadas",
     "PTEE — Uso de Intermediarios / Soborno Transnacional",
     "PTEE — Prácticas Anticompetitivas / Colusión",
-    "PTEE — Conducta No Ética de Directivos y Colaboradores"
+    "PTEE — Conducta No Ética de Directivos y Colaboradores",
+    "PTEE — Cabildeo",
+    "PTEE — Donaciones",
+    "PTEE — Contratación"
 ];
 
 const SERGIO_ARBOLEDA_CATALOG: Record<string, string[]> = {
@@ -247,13 +250,13 @@ export default function RiskMatrixConfig() {
     const [step, setStep] = useState(1);
     const [isEditing, setIsEditing] = useState(false);
     const [isAutoCalculating, setIsAutoCalculating] = useState(false);
-    
+
     const [auth, setAuth] = useState({
         role: "",
         dependenceId: "",
         isSuper: false
     });
-    const [dependencies, setDependencies] = useState<{id: string, name: string}[]>([]);
+    const [dependencies, setDependencies] = useState<{ id: string, name: string }[]>([]);
     const [loading, setLoading] = useState(true);
     const [risksList, setRisksList] = useState<any[]>([]);
     const [searchTerm, setSearchTerm] = useState("");
@@ -271,13 +274,13 @@ export default function RiskMatrixConfig() {
         context: [],
         associatedImpacts: [],
         treatment: TREATMENT_OPTIONS[1],
-        mitigations: [{ 
-            id: "1", 
-            controlType: CONTROL_TYPES[0].name, 
+        mitigations: [{
+            id: "1",
+            controlType: CONTROL_TYPES[0].name,
             nature: CONTROL_TYPES[0].nature,
             customControlName: "",
-            description: "", 
-            efficacy: CONTROL_TYPES[0].efficacy, 
+            description: "",
+            efficacy: CONTROL_TYPES[0].efficacy,
             responsible: "",
             evaluation: "SÍ SE ESTÁN APLICANDO Y SON ADECUADOS"
         }],
@@ -316,13 +319,13 @@ export default function RiskMatrixConfig() {
             const preventives = config.mitigations.filter(m => m.nature === "Preventivo");
             const detectives = config.mitigations.filter(m => m.nature === "Detectivo");
 
-            const avgEfficacyProb = preventives.length > 0 
-                ? preventives.reduce((acc, m) => acc + (m.efficacy || 0), 0) / preventives.length 
+            const avgEfficacyProb = preventives.length > 0
+                ? preventives.reduce((acc, m) => acc + (m.efficacy || 0), 0) / preventives.length
                 : 0;
-            const avgEfficacyImpact = detectives.length > 0 
-                ? detectives.reduce((acc, m) => acc + (m.efficacy || 0), 0) / detectives.length 
+            const avgEfficacyImpact = detectives.length > 0
+                ? detectives.reduce((acc, m) => acc + (m.efficacy || 0), 0) / detectives.length
                 : 0;
-            
+
             // Reducción proporcional: Preventivos afectan Probabilidad, Detectivos afectan Impacto
             const redProb = Math.max(1, Math.ceil(config.probability * (1 - avgEfficacyProb)));
             const redImpact = Math.max(1, Math.ceil(config.impact * (1 - avgEfficacyImpact)));
@@ -355,7 +358,7 @@ export default function RiskMatrixConfig() {
         const role = searchParams.get("role_id") || "";
         const depId = searchParams.get("dependence_id") || "";
         const isSuper = role === "SUPER";
-        
+
         setAuth({ role, dependenceId: depId, isSuper });
         setConfig(prev => ({ ...prev, dependenceId: depId }));
 
@@ -392,7 +395,7 @@ export default function RiskMatrixConfig() {
     useEffect(() => {
         if (isEditing) return;
         if (config.catalogRisk === "PERSONALIZADO") return;
-        
+
         // Find suggestion using partial match (first key found that is part of the catalog name)
         const suggestionKey = Object.keys(RISK_SUGGESTIONS).find(key => config.catalogRisk.includes(key));
         const suggestion = suggestionKey ? RISK_SUGGESTIONS[suggestionKey] : null;
@@ -414,13 +417,13 @@ export default function RiskMatrixConfig() {
             ...prev,
             mitigations: [
                 ...prev.mitigations,
-                { 
-                    id: Math.random().toString(36).substr(2, 9), 
-                    controlType: CONTROL_TYPES[0].name, 
+                {
+                    id: Math.random().toString(36).substr(2, 9),
+                    controlType: CONTROL_TYPES[0].name,
                     nature: CONTROL_TYPES[0].nature,
                     customControlName: "",
-                    description: "", 
-                    efficacy: CONTROL_TYPES[0].efficacy, 
+                    description: "",
+                    efficacy: CONTROL_TYPES[0].efficacy,
                     responsible: "",
                     evaluation: "SÍ SE ESTÁN APLICANDO Y SON ADECUADOS"
                 }
@@ -505,13 +508,13 @@ export default function RiskMatrixConfig() {
                 probability: Number(risk.probability) || 3,
                 impact: Number(risk.impact) || 3,
                 justification: risk.comments || "",
-                mitigations: mitigations.length > 0 ? mitigations : [{ 
-                    id: "1", 
-                    controlType: CONTROL_TYPES[0].name, 
+                mitigations: mitigations.length > 0 ? mitigations : [{
+                    id: "1",
+                    controlType: CONTROL_TYPES[0].name,
                     nature: CONTROL_TYPES[0].nature,
                     customControlName: "",
-                    description: "", 
-                    efficacy: CONTROL_TYPES[0].efficacy, 
+                    description: "",
+                    efficacy: CONTROL_TYPES[0].efficacy,
                     responsible: "",
                     evaluation: "SÍ SE ESTÁN APLICANDO Y SON ADECUADOS"
                 }],
@@ -525,7 +528,7 @@ export default function RiskMatrixConfig() {
             });
 
             setIsEditing(true);
-            setStep(2); 
+            setStep(2);
             setActiveTab("create");
         } catch (err) {
             console.error("Error loading risk details", err);
@@ -537,7 +540,7 @@ export default function RiskMatrixConfig() {
     const handleSave = async () => {
         setLoading(true);
         const userKey = process.env.NEXT_PUBLIC_DASHBOARD_USER_KEY || "019bdbff-d27c-7583-b76f-80edd5ae064e";
-        
+
         try {
             const riskPayload = {
                 name: config.customRiskName || config.catalogRisk,
@@ -568,7 +571,7 @@ export default function RiskMatrixConfig() {
                         params: [config.id]
                     })
                 });
-                
+
                 for (const mitigation of config.mitigations) {
                     await fetch(`/api/sql?x-user-key=${userKey}`, {
                         method: 'POST',
@@ -576,11 +579,11 @@ export default function RiskMatrixConfig() {
                         body: JSON.stringify({
                             sql: `INSERT INTO riesgos_judiciales_db.risk_action_tbl (risk_id, description, type, person, dependence_id, status) VALUES (?, ?, ?, ?, ?, ?)`,
                             params: [
-                                config.id, 
-                                mitigation.description || '', 
-                                mitigation.controlType === 'OTRO (PERSONALIZADO)' ? mitigation.customControlName : mitigation.controlType || '', 
-                                mitigation.responsible || '', 
-                                config.dependenceId, 
+                                config.id,
+                                mitigation.description || '',
+                                mitigation.controlType === 'OTRO (PERSONALIZADO)' ? mitigation.customControlName : mitigation.controlType || '',
+                                mitigation.responsible || '',
+                                config.dependenceId,
                                 'ACTIVO'
                             ]
                         })
@@ -606,11 +609,11 @@ export default function RiskMatrixConfig() {
                             body: JSON.stringify({
                                 sql: `INSERT INTO riesgos_judiciales_db.risk_action_tbl (risk_id, description, type, person, dependence_id, status) VALUES (?, ?, ?, ?, ?, ?)`,
                                 params: [
-                                    newId, 
-                                    mitigation.description || '', 
-                                    mitigation.controlType === 'OTRO (PERSONALIZADO)' ? mitigation.customControlName : mitigation.controlType || '', 
-                                    mitigation.responsible || '', 
-                                    config.dependenceId, 
+                                    newId,
+                                    mitigation.description || '',
+                                    mitigation.controlType === 'OTRO (PERSONALIZADO)' ? mitigation.customControlName : mitigation.controlType || '',
+                                    mitigation.responsible || '',
+                                    config.dependenceId,
                                     'ACTIVO'
                                 ]
                             })
@@ -635,7 +638,7 @@ export default function RiskMatrixConfig() {
     const resetForm = () => {
         const types = activeRiskTypes.current;
         const catalog = activeCatalog.current;
-        
+
         setConfig({
             id: "",
             dependenceId: auth.dependenceId,
@@ -647,13 +650,13 @@ export default function RiskMatrixConfig() {
             probability: 3,
             impact: 10,
             justification: "",
-            mitigations: [{ 
-                id: "1", 
-                controlType: CONTROL_TYPES[0].name, 
+            mitigations: [{
+                id: "1",
+                controlType: CONTROL_TYPES[0].name,
                 nature: CONTROL_TYPES[0].nature,
                 customControlName: "",
-                description: "", 
-                efficacy: CONTROL_TYPES[0].efficacy, 
+                description: "",
+                efficacy: CONTROL_TYPES[0].efficacy,
                 responsible: "",
                 evaluation: "SÍ SE ESTÁN APLICANDO Y SON ADECUADOS"
             }],
@@ -671,7 +674,7 @@ export default function RiskMatrixConfig() {
 
     const inherentRisk = config.impact * config.probability;
     const residualRisk = config.residualImpact * config.residualProbability;
-    
+
     const getRiskZone = (score: number) => {
         if (isNaN(score) || score === null || score === undefined) return { label: "N/A", color: "text-gray-400", bg: "bg-gray-400/10", zone: "Gris" };
         if (score <= 5) return { label: "Zona Aceptable", color: "text-green-500", bg: "bg-green-500/10", zone: "Verde" };
@@ -684,7 +687,7 @@ export default function RiskMatrixConfig() {
     const isInacceptable = getRiskZone(inherentRisk).zone === "Rojo";
     const canSave = !isInacceptable || config.mitigations.length >= 2;
 
-    const filteredRisks = risksList.filter(r => 
+    const filteredRisks = risksList.filter(r =>
         (r.name || r.risk_name || "").toLowerCase().includes(searchTerm.toLowerCase())
     );
 
@@ -704,7 +707,7 @@ export default function RiskMatrixConfig() {
                     <div className="flex items-center gap-3">
                         <ThemeToggle />
                         <div className="flex p-1 bg-gray-200 dark:bg-gray-800 rounded-2xl">
-                            <button 
+                            <button
                                 onClick={() => { setActiveTab("create"); resetForm(); }}
                                 className={cn(
                                     "flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all",
@@ -714,7 +717,7 @@ export default function RiskMatrixConfig() {
                                 <Plus className="w-4 h-4" />
                                 Nuevo
                             </button>
-                            <button 
+                            <button
                                 onClick={() => setActiveTab("list")}
                                 className={cn(
                                     "flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all",
@@ -733,7 +736,7 @@ export default function RiskMatrixConfig() {
                         <div className="bg-white dark:bg-gray-800 rounded-3xl p-4 shadow-xl border border-gray-100 dark:border-gray-700 flex items-center gap-4">
                             <div className="relative flex-1">
                                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                                <input 
+                                <input
                                     type="text"
                                     placeholder="Buscar riesgo por nombre..."
                                     value={searchTerm}
@@ -791,7 +794,7 @@ export default function RiskMatrixConfig() {
                                                         </span>
                                                     </td>
                                                     <td className="px-8 py-6 text-right">
-                                                        <button 
+                                                        <button
                                                             onClick={() => handleEditRisk(risk)}
                                                             className="p-2 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-blue-500 rounded-xl transition-all active:scale-90"
                                                         >
@@ -860,9 +863,9 @@ export default function RiskMatrixConfig() {
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                                             <div className="space-y-4">
                                                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Tipo de Riesgo (SARLAFT)</label>
-                                                <select 
+                                                <select
                                                     value={config.riskType}
-                                                    onChange={(e) => setConfig({...config, riskType: e.target.value})}
+                                                    onChange={(e) => setConfig({ ...config, riskType: e.target.value })}
                                                     className="w-full px-6 py-5 bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-700 rounded-[24px] focus:ring-4 focus:ring-blue-500/20 outline-none transition-all appearance-none shadow-sm dark:text-white"
                                                 >
                                                     {activeRiskTypes.current.map(t => <option key={t} value={t}>{t}</option>)}
@@ -873,9 +876,9 @@ export default function RiskMatrixConfig() {
                                                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 flex items-center gap-2">
                                                     <BookOpen className="w-3 h-3" /> Riesgo a Catalogar
                                                 </label>
-                                                <select 
+                                                <select
                                                     value={config.catalogRisk}
-                                                    onChange={(e) => setConfig({...config, catalogRisk: e.target.value})}
+                                                    onChange={(e) => setConfig({ ...config, catalogRisk: e.target.value })}
                                                     className="w-full px-6 py-5 bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-700 rounded-[24px] focus:ring-4 focus:ring-blue-500/20 outline-none transition-all appearance-none shadow-sm dark:text-white"
                                                 >
                                                     {(activeCatalog.current[config.riskType] || []).map(r => <option key={r} value={r}>{r}</option>)}
@@ -888,10 +891,10 @@ export default function RiskMatrixConfig() {
                                                     <label className="text-[10px] font-black text-blue-500 uppercase tracking-widest ml-1 flex items-center gap-2">
                                                         <PlusCircle className="w-3 h-3" /> Nombre del Riesgo Personalizado
                                                     </label>
-                                                    <input 
+                                                    <input
                                                         type="text"
                                                         value={config.customRiskName}
-                                                        onChange={(e) => setConfig({...config, customRiskName: e.target.value})}
+                                                        onChange={(e) => setConfig({ ...config, customRiskName: e.target.value })}
                                                         placeholder="Especifique el nombre del riesgo..."
                                                         className="w-full px-6 py-5 bg-blue-50/30 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-800 rounded-[24px] focus:ring-4 focus:ring-blue-500/20 outline-none transition-all dark:text-white"
                                                     />
@@ -900,10 +903,10 @@ export default function RiskMatrixConfig() {
 
                                             <div className="space-y-4 col-span-full pt-4 border-t border-gray-100 dark:border-gray-700">
                                                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Dependencia / Área Responsable</label>
-                                                <select 
+                                                <select
                                                     disabled={!auth.isSuper}
                                                     value={config.dependenceId}
-                                                    onChange={(e) => setConfig({...config, dependenceId: e.target.value})}
+                                                    onChange={(e) => setConfig({ ...config, dependenceId: e.target.value })}
                                                     className="w-full px-6 py-5 bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-700 rounded-[24px] focus:ring-4 focus:ring-blue-500/20 outline-none appearance-none transition-all dark:text-white"
                                                 >
                                                     <option value="">Seleccione una dependencia...</option>
@@ -913,9 +916,9 @@ export default function RiskMatrixConfig() {
 
                                             <div className="space-y-4 col-span-full">
                                                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Descripción Detallada</label>
-                                                <textarea 
+                                                <textarea
                                                     value={config.description}
-                                                    onChange={(e) => setConfig({...config, description: e.target.value})}
+                                                    onChange={(e) => setConfig({ ...config, description: e.target.value })}
                                                     placeholder="Escriba la descripción del riesgo..."
                                                     className="w-full px-6 py-5 bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-700 rounded-[24px] focus:ring-4 focus:ring-blue-500/20 outline-none transition-all h-24 dark:text-white"
                                                 />
@@ -943,10 +946,10 @@ export default function RiskMatrixConfig() {
                                                         <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Probabilidad (Escala 1-4)</label>
                                                         <span className="text-2xl font-black text-blue-500">{config.probability}</span>
                                                     </div>
-                                                    <input 
-                                                        type="range" min="1" max="4" 
+                                                    <input
+                                                        type="range" min="1" max="4"
                                                         value={config.probability}
-                                                        onChange={(e) => setConfig({...config, probability: parseInt(e.target.value)})}
+                                                        onChange={(e) => setConfig({ ...config, probability: parseInt(e.target.value) })}
                                                         className="w-full h-3 bg-gray-100 dark:bg-gray-700 rounded-full appearance-none cursor-pointer accent-blue-600 shadow-sm"
                                                     />
                                                 </div>
@@ -958,9 +961,9 @@ export default function RiskMatrixConfig() {
                                                     </div>
                                                     <div className="flex gap-2">
                                                         {[5, 10, 20].map(val => (
-                                                            <button 
+                                                            <button
                                                                 key={val}
-                                                                onClick={() => setConfig({...config, impact: val})}
+                                                                onClick={() => setConfig({ ...config, impact: val })}
                                                                 className={cn(
                                                                     "flex-1 py-3 rounded-xl text-xs font-black transition-all border",
                                                                     config.impact === val ? "bg-amber-500 text-white border-amber-500 shadow-lg" : "bg-white dark:bg-gray-800 text-gray-400 border-gray-100 dark:border-gray-700 dark:text-white"
@@ -996,7 +999,7 @@ export default function RiskMatrixConfig() {
                                                 <h3 className="text-2xl font-black text-gray-900 dark:text-white uppercase tracking-tight">Paso 3: Sistema de Control</h3>
                                                 <p className="text-gray-500 dark:text-gray-400 text-sm italic">Mitigación técnica y evaluación de eficacia.</p>
                                             </div>
-                                            <button 
+                                            <button
                                                 onClick={handleAddMitigation}
                                                 className="p-4 bg-blue-600 text-white rounded-2xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-600/20 active:scale-95"
                                             >
@@ -1006,7 +1009,7 @@ export default function RiskMatrixConfig() {
 
                                         <div className="grid grid-cols-1 gap-8 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
                                             {config.mitigations.map((mitigation, idx) => (
-                                                <div 
+                                                <div
                                                     key={mitigation.id}
                                                     className="p-8 bg-gray-50 dark:bg-gray-900/50 rounded-[32px] border border-gray-100 dark:border-gray-700 space-y-8 group relative"
                                                 >
@@ -1017,7 +1020,7 @@ export default function RiskMatrixConfig() {
                                                             </div>
                                                             <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Identificación del Control</span>
                                                         </div>
-                                                        <button 
+                                                        <button
                                                             onClick={() => handleRemoveMitigation(mitigation.id)}
                                                             className="p-2 text-red-400 hover:text-red-500 transition-all"
                                                         >
@@ -1028,7 +1031,7 @@ export default function RiskMatrixConfig() {
                                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                                                         <div className="space-y-4">
                                                             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Tipo de Control</label>
-                                                            <select 
+                                                            <select
                                                                 value={mitigation.controlType}
                                                                 onChange={(e) => handleMitigationChange(mitigation.id, "controlType", e.target.value)}
                                                                 className="w-full px-5 py-4 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl text-sm outline-none transition-all dark:text-white"
@@ -1041,7 +1044,7 @@ export default function RiskMatrixConfig() {
                                                                 <label className="text-[10px] font-black text-blue-500 uppercase tracking-widest ml-1 flex items-center gap-2">
                                                                     <PlusCircle className="w-3 h-3" /> Nombre del Control Personalizado
                                                                 </label>
-                                                                <input 
+                                                                <input
                                                                     type="text"
                                                                     value={mitigation.customControlName}
                                                                     onChange={(e) => handleMitigationChange(mitigation.id, "customControlName", e.target.value)}
@@ -1052,7 +1055,7 @@ export default function RiskMatrixConfig() {
                                                         )}
                                                         <div className="space-y-4">
                                                             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Área Responsable</label>
-                                                            <input 
+                                                            <input
                                                                 type="text"
                                                                 value={mitigation.responsible}
                                                                 onChange={(e) => handleMitigationChange(mitigation.id, "responsible", e.target.value)}
@@ -1094,9 +1097,9 @@ export default function RiskMatrixConfig() {
 
                                         <div className="p-8 bg-gray-50 dark:bg-gray-900/50 rounded-[32px] border border-gray-100 dark:border-gray-700 space-y-6">
                                             <h4 className="font-bold uppercase tracking-widest text-xs">MÓDULO 10 — Justificación</h4>
-                                            <textarea 
+                                            <textarea
                                                 value={config.justification}
-                                                onChange={(e) => setConfig({...config, justification: e.target.value})}
+                                                onChange={(e) => setConfig({ ...config, justification: e.target.value })}
                                                 className="w-full bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl p-6 text-sm focus:ring-2 focus:ring-blue-500 outline-none h-32 transition-all"
                                             />
                                         </div>
@@ -1104,7 +1107,7 @@ export default function RiskMatrixConfig() {
                                 )}
 
                                 <div className="flex justify-between items-center pt-4">
-                                    <button 
+                                    <button
                                         disabled={step === 1}
                                         onClick={() => setStep(prev => prev - 1)}
                                         className="flex items-center gap-2 px-8 py-4 text-gray-500 font-bold hover:text-gray-700 disabled:opacity-0 transition-all"
@@ -1112,9 +1115,9 @@ export default function RiskMatrixConfig() {
                                         <ChevronLeft className="w-5 h-5" />
                                         Anterior
                                     </button>
-                                    
+
                                     {step < 4 ? (
-                                        <button 
+                                        <button
                                             onClick={() => setStep(prev => prev + 1)}
                                             className="flex items-center gap-2 px-10 py-5 bg-blue-600 text-white rounded-[24px] font-black shadow-xl shadow-blue-600/30 hover:bg-blue-700 hover:scale-105 active:scale-95 transition-all"
                                         >
@@ -1122,7 +1125,7 @@ export default function RiskMatrixConfig() {
                                             <ChevronRight className="w-5 h-5" />
                                         </button>
                                     ) : (
-                                        <button 
+                                        <button
                                             onClick={handleSave}
                                             className="px-10 py-5 bg-blue-600 text-white rounded-[24px] font-black flex items-center gap-3 transition-all hover:bg-blue-700 active:scale-95 shadow-xl shadow-blue-600/30"
                                         >
@@ -1146,8 +1149,8 @@ export default function RiskMatrixConfig() {
                                         <div className="flex justify-between items-center">
                                             <h4 className="text-xs font-black uppercase tracking-widest text-gray-400">Escenario de Riesgo Residual</h4>
                                             <div className="flex items-center gap-2">
-                                                <input 
-                                                    type="checkbox" 
+                                                <input
+                                                    type="checkbox"
                                                     id="manualResidual"
                                                     checked={config.manualResidual}
                                                     onChange={(e) => setConfig(prev => ({ ...prev, manualResidual: e.target.checked }))}
@@ -1160,7 +1163,7 @@ export default function RiskMatrixConfig() {
                                         <div className="grid grid-cols-2 gap-4">
                                             <div className="space-y-2">
                                                 <label className="text-[10px] font-bold text-gray-500 uppercase tracking-tighter">Probabilidad Residual</label>
-                                                <select 
+                                                <select
                                                     value={config.residualProbability}
                                                     disabled={!config.manualResidual}
                                                     onChange={(e) => setConfig(prev => ({ ...prev, residualProbability: parseInt(e.target.value) }))}
@@ -1171,7 +1174,7 @@ export default function RiskMatrixConfig() {
                                             </div>
                                             <div className="space-y-2">
                                                 <label className="text-[10px] font-bold text-gray-500 uppercase tracking-tighter">Impacto Residual</label>
-                                                <select 
+                                                <select
                                                     value={config.residualImpact}
                                                     disabled={!config.manualResidual}
                                                     onChange={(e) => setConfig(prev => ({ ...prev, residualImpact: parseInt(e.target.value) }))}
@@ -1188,7 +1191,7 @@ export default function RiskMatrixConfig() {
                                                 <span className={cn("text-lg font-black", getRiskZone(residualRisk).color)}>{residualRisk}</span>
                                             </div>
                                             <div className="w-full h-2 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
-                                                <div 
+                                                <div
                                                     className={cn("h-full transition-all duration-1000", getRiskZone(residualRisk).color.replace('text-', 'bg-'))}
                                                     style={{ width: `${(residualRisk / 80) * 100}%` }}
                                                 />
