@@ -111,6 +111,7 @@ const SERGIO_ARBOLEDA_RISK_TYPES = [
     "Soborno Transnacional",
     "Fraude Interno",
     "Operacional",
+    "PTEE",
     "PTEE — Corrupción y Soborno (Programa de Transparencia y Ética Empresarial)",
     "PTEE — Conflicto de Interés",
     "PTEE — Beneficios Indebidos / Donaciones Condicionadas",
@@ -119,7 +120,7 @@ const SERGIO_ARBOLEDA_RISK_TYPES = [
     "PTEE — Conducta No Ética de Directivos y Colaboradores",
     "PTEE — Cabildeo",
     "PTEE — Donaciones",
-    "PTEE — Contratación"
+    "PTEE — Contratación",
 ];
 
 const SERGIO_ARBOLEDA_CATALOG: Record<string, string[]> = {
