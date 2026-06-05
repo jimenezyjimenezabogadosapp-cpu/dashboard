@@ -25,7 +25,9 @@ import {
     BookOpen,
     RefreshCw,
     PlusCircle,
-    Activity
+    Activity,
+    Eye,
+    X
 } from "lucide-react";
 
 interface Mitigation {
@@ -251,6 +253,10 @@ export default function RiskMatrixConfig() {
     const [step, setStep] = useState(1);
     const [isEditing, setIsEditing] = useState(false);
     const [isAutoCalculating, setIsAutoCalculating] = useState(false);
+
+    const [viewingRisk, setViewingRisk] = useState<any | null>(null);
+    const [viewingActions, setViewingActions] = useState<any[]>([]);
+    const [isViewing, setIsViewing] = useState(false);
 
     const [auth, setAuth] = useState({
         role: "",
@@ -538,6 +544,23 @@ export default function RiskMatrixConfig() {
         }
     };
 
+    const handleViewRisk = async (risk: any) => {
+        setLoading(true);
+        try {
+            const query = `SELECT * FROM risk_action_tbl WHERE risk_id = ${risk.id}`;
+            const res = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(query));
+            const actions = await res.json();
+            
+            setViewingRisk(risk);
+            setViewingActions(Array.isArray(actions) ? actions : []);
+            setIsViewing(true);
+        } catch (err) {
+            console.error("Error loading risk details for view", err);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const handleSave = async () => {
         setLoading(true);
         const userKey = process.env.NEXT_PUBLIC_DASHBOARD_USER_KEY || "019bdbff-d27c-7583-b76f-80edd5ae064e";
@@ -794,9 +817,17 @@ export default function RiskMatrixConfig() {
                                                             {residualScoreStr}
                                                         </span>
                                                     </td>
-                                                    <td className="px-8 py-6 text-right">
+                                                    <td className="px-8 py-6 text-right flex justify-end gap-2">
+                                                        <button
+                                                            onClick={() => handleViewRisk(risk)}
+                                                            title="Ver Detalle Completo"
+                                                            className="p-2 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 text-indigo-500 rounded-xl transition-all active:scale-90"
+                                                        >
+                                                            <Eye className="w-5 h-5" />
+                                                        </button>
                                                         <button
                                                             onClick={() => handleEditRisk(risk)}
+                                                            title="Editar Riesgo"
                                                             className="p-2 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-blue-500 rounded-xl transition-all active:scale-90"
                                                         >
                                                             <Edit3 className="w-5 h-5" />
@@ -1205,6 +1236,217 @@ export default function RiskMatrixConfig() {
                     </div>
                 )}
             </div>
+
+            {/* MODAL DE VISTA DETALLADA */}
+            {isViewing && viewingRisk && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+                    <div className="absolute inset-0 bg-gray-900/60 backdrop-blur-sm" onClick={() => setIsViewing(false)}></div>
+                    <div className="relative w-full max-w-5xl bg-white dark:bg-gray-800 rounded-[32px] shadow-2xl flex flex-col max-h-[90vh] overflow-hidden animate-in zoom-in-95 duration-300 border border-gray-100 dark:border-gray-700">
+                        {/* Header Modal */}
+                        <div className="p-6 md:p-8 border-b border-gray-100 dark:border-gray-700 flex justify-between items-start bg-gray-50/50 dark:bg-gray-900/50">
+                            <div className="space-y-2">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-xl">
+                                        <ShieldCheck className="w-6 h-6" />
+                                    </div>
+                                    <h2 className="text-2xl md:text-3xl font-black text-gray-900 dark:text-white tracking-tight">
+                                        {viewingRisk.name || viewingRisk.risk_name}
+                                    </h2>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <span className="px-3 py-1 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full text-[10px] font-bold uppercase tracking-widest">
+                                        {viewingRisk.dependence_name || "Dependencia General"}
+                                    </span>
+                                    <span className={cn("px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest", viewingRisk.status === 'ACTIVO' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-gray-200 text-gray-500')}>
+                                        Estado: {viewingRisk.status || "N/A"}
+                                    </span>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setIsViewing(false)}
+                                className="p-2 bg-white dark:bg-gray-800 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-all shadow-sm"
+                            >
+                                <X className="w-6 h-6" />
+                            </button>
+                        </div>
+
+                        {/* Contenido Scrollable */}
+                        <div className="flex-1 overflow-y-auto p-6 md:p-8 custom-scrollbar bg-white dark:bg-gray-800 space-y-8">
+                            
+                            {/* Sección 1: Identificación y Descripción */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div className="space-y-3">
+                                    <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                                        <BookOpen className="w-4 h-4 text-indigo-400" />
+                                        Identificación del Riesgo
+                                    </h3>
+                                    <div className="p-5 bg-gray-50 dark:bg-gray-900/50 rounded-2xl border border-gray-100 dark:border-gray-700 space-y-4">
+                                        <div>
+                                            <div className="text-[10px] text-gray-400 uppercase font-bold mb-1">Tipo de Riesgo (SARLAFT)</div>
+                                            <div className="text-sm font-bold text-gray-900 dark:text-white">{viewingRisk.type || "General"}</div>
+                                        </div>
+                                        <div>
+                                            <div className="text-[10px] text-gray-400 uppercase font-bold mb-1">Riesgo a Catalogar</div>
+                                            <div className="text-sm font-bold text-gray-900 dark:text-white">{viewingRisk.name || viewingRisk.risk_name || "Personalizado"}</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-3">
+                                    <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                                        <FileText className="w-4 h-4 text-indigo-400" />
+                                        Descripción / Justificación
+                                    </h3>
+                                    <div className="p-5 bg-gray-50 dark:bg-gray-900/50 rounded-2xl border border-gray-100 dark:border-gray-700 space-y-4">
+                                        <div>
+                                            <div className="text-[10px] text-gray-400 uppercase font-bold mb-1">Descripción del Escenario</div>
+                                            <p className="text-sm text-gray-600 dark:text-gray-300 leading-relaxed">
+                                                {viewingRisk.description || "No se proporcionó descripción."}
+                                            </p>
+                                        </div>
+                                        {viewingRisk.comments && (
+                                            <div>
+                                                <div className="text-[10px] text-gray-400 uppercase font-bold mb-1">Justificación (Ajuste Residual)</div>
+                                                <p className="text-sm text-gray-600 dark:text-gray-300 leading-relaxed">
+                                                    {viewingRisk.comments}
+                                                </p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Sección 2: Matrices de Riesgo (Inherente vs Residual) */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                {/* Inherente */}
+                                <div className="p-6 bg-gray-50 dark:bg-gray-900/50 rounded-3xl border border-gray-100 dark:border-gray-700 space-y-4 relative overflow-hidden">
+                                    {(() => {
+                                        const score = (Number(viewingRisk.impact) * Number(viewingRisk.probability));
+                                        const zone = getRiskZone(score);
+                                        return (
+                                            <>
+                                                <div className={cn("absolute inset-0 opacity-10", zone.bg)}></div>
+                                                <div className="relative z-10 flex justify-between items-start">
+                                                    <h4 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                                                        <Calculator className="w-4 h-4 text-gray-500" /> Riesgo Inherente
+                                                    </h4>
+                                                    <span className={cn("px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest", zone.bg, zone.color)}>
+                                                        {zone.label}
+                                                    </span>
+                                                </div>
+                                                <div className="relative z-10 grid grid-cols-2 gap-4 mt-4">
+                                                    <div className="bg-white dark:bg-gray-800 p-3 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
+                                                        <div className="text-[10px] text-gray-400 uppercase font-bold mb-1">Probabilidad</div>
+                                                        <div className="text-2xl font-black text-gray-900 dark:text-white">{viewingRisk.probability || "-"}</div>
+                                                    </div>
+                                                    <div className="bg-white dark:bg-gray-800 p-3 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
+                                                        <div className="text-[10px] text-gray-400 uppercase font-bold mb-1">Impacto</div>
+                                                        <div className="text-2xl font-black text-gray-900 dark:text-white">{viewingRisk.impact || "-"}</div>
+                                                    </div>
+                                                </div>
+                                                <div className="relative z-10 flex items-center gap-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                                                    <div className="text-xs font-bold text-gray-500 uppercase">Puntaje Total</div>
+                                                    <div className={cn("text-3xl font-black", zone.color)}>{isNaN(score) ? "N/A" : score}</div>
+                                                </div>
+                                            </>
+                                        );
+                                    })()}
+                                </div>
+
+                                {/* Residual */}
+                                <div className="p-6 bg-gray-50 dark:bg-gray-900/50 rounded-3xl border border-gray-100 dark:border-gray-700 space-y-4 relative overflow-hidden">
+                                    {(() => {
+                                        const score = (Number(viewingRisk.residual_impact) * Number(viewingRisk.residual_probability));
+                                        const zone = getRiskZone(score);
+                                        return (
+                                            <>
+                                                <div className={cn("absolute inset-0 opacity-10", zone.bg)}></div>
+                                                <div className="relative z-10 flex justify-between items-start">
+                                                    <h4 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                                                        <Zap className="w-4 h-4 text-gray-500" /> Riesgo Residual
+                                                    </h4>
+                                                    <span className={cn("px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest", zone.bg, zone.color)}>
+                                                        {zone.label}
+                                                    </span>
+                                                </div>
+                                                <div className="relative z-10 grid grid-cols-2 gap-4 mt-4">
+                                                    <div className="bg-white dark:bg-gray-800 p-3 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
+                                                        <div className="text-[10px] text-gray-400 uppercase font-bold mb-1">Probabilidad</div>
+                                                        <div className="text-2xl font-black text-gray-900 dark:text-white">{viewingRisk.residual_probability || "-"}</div>
+                                                    </div>
+                                                    <div className="bg-white dark:bg-gray-800 p-3 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
+                                                        <div className="text-[10px] text-gray-400 uppercase font-bold mb-1">Impacto</div>
+                                                        <div className="text-2xl font-black text-gray-900 dark:text-white">{viewingRisk.residual_impact || "-"}</div>
+                                                    </div>
+                                                </div>
+                                                <div className="relative z-10 flex items-center gap-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                                                    <div className="text-xs font-bold text-gray-500 uppercase">Puntaje Total</div>
+                                                    <div className={cn("text-3xl font-black", zone.color)}>{isNaN(score) ? "N/A" : score}</div>
+                                                </div>
+                                            </>
+                                        );
+                                    })()}
+                                </div>
+                            </div>
+
+                            {/* Sección 3: Controles / Mitigaciones */}
+                            <div className="space-y-4">
+                                <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest flex items-center justify-between">
+                                    <span className="flex items-center gap-2">
+                                        <ShieldCheck className="w-4 h-4 text-indigo-400" />
+                                        Controles y Mitigaciones Implementados
+                                    </span>
+                                    <span className="px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded-lg text-[10px]">
+                                        Total: {viewingActions.length}
+                                    </span>
+                                </h3>
+                                
+                                {viewingActions.length === 0 ? (
+                                    <div className="p-8 text-center bg-gray-50 dark:bg-gray-900/50 rounded-2xl border border-dashed border-gray-300 dark:border-gray-700">
+                                        <AlertTriangle className="w-8 h-8 text-yellow-500 mx-auto mb-2" />
+                                        <p className="text-sm text-gray-500 font-bold">No hay controles registrados para este riesgo.</p>
+                                    </div>
+                                ) : (
+                                    <div className="grid grid-cols-1 gap-4">
+                                        {viewingActions.map((action, idx) => (
+                                            <div key={action.id || idx} className="p-5 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 shadow-sm rounded-2xl flex flex-col md:flex-row gap-4 justify-between items-start md:items-center hover:border-indigo-200 transition-colors">
+                                                <div className="space-y-2 flex-1">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="w-6 h-6 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-[10px] font-black">
+                                                            {idx + 1}
+                                                        </span>
+                                                        <h4 className="font-bold text-gray-900 dark:text-white text-sm">
+                                                            {action.type || "Control sin nombre"}
+                                                        </h4>
+                                                    </div>
+                                                    {action.description && (
+                                                        <p className="text-xs text-gray-500 dark:text-gray-400 pl-8">
+                                                            {action.description}
+                                                        </p>
+                                                    )}
+                                                </div>
+                                                <div className="flex flex-col gap-2 pl-8 md:pl-0 min-w-[200px]">
+                                                    <div className="flex items-center gap-2 text-xs text-gray-500">
+                                                        <User className="w-3 h-3" />
+                                                        <span className="font-bold">{action.person || "Sin responsable"}</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-2 text-xs">
+                                                        <Activity className="w-3 h-3 text-gray-400" />
+                                                        <span className={cn("px-2 py-0.5 rounded-md text-[10px] font-bold uppercase", action.status === 'ACTIVO' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600')}>
+                                                            Estado: {action.status || "N/A"}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
