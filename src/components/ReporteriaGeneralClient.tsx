@@ -833,7 +833,17 @@ export default function ReporteriaGeneralClient() {
                 }
             };
 
-            const reportsUrl = process.env.NEXT_PUBLIC_REPORTS_URL;
+            let reportsUrl = process.env.NEXT_PUBLIC_REPORTS_URL;
+            if (!reportsUrl || reportsUrl.includes('localhost')) {
+                if (typeof window !== 'undefined') {
+                    if (window.location.hostname.includes('usergioarboleda')) {
+                        reportsUrl = 'https://listasrestrictivas.usergioarboleda.edu.co/reports-api';
+                    } else if (window.location.hostname.includes('area-cumplimiento')) {
+                        reportsUrl = 'https://backend.area-cumplimiento.com/reports';
+                    }
+                }
+            }
+
             const response = await fetch(`${reportsUrl}/reports/dashboard`, {
                 method: 'POST',
                 headers: {
