@@ -204,6 +204,33 @@ const RiskMatrixScatter: React.FC<RiskMatrixProps> = ({ title, points }) => {
                     </div>
                 ))}
             </div>
+
+            {/* Leyenda de Siglas */}
+            {points.length > 0 && (
+                <div className="mt-12 border-t border-gray-100 dark:border-gray-700 pt-8">
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-6 text-center">Convenciones de Riesgos / Dependencias</p>
+                    <div className="flex flex-wrap justify-center gap-x-8 gap-y-4 px-4">
+                        {points.map(p => {
+                            const initials = p.name
+                                .split(' ')
+                                .map(word => word[0])
+                                .join('')
+                                .substring(0, 3)
+                                .toUpperCase();
+                            return (
+                                <div key={p.id} className="flex items-center gap-3">
+                                    <div className="w-8 h-8 bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-600 rounded-full flex items-center justify-center shrink-0 shadow-sm">
+                                        <span className="text-[9px] font-black text-gray-900 dark:text-gray-100 leading-none">{initials}</span>
+                                    </div>
+                                    <span className="text-[10px] font-bold text-gray-600 dark:text-gray-300 uppercase max-w-[200px] truncate" title={p.name}>
+                                        {p.name}
+                                    </span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

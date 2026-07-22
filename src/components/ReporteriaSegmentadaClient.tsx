@@ -118,21 +118,52 @@ export default function ReporteriaSegmentadaClient() {
                 const userKey = "019bdbff-d27c-7583-b76f-80edd5ae064e";
 
                 // Cláusulas WHERE seguras
+                // Cláusulas WHERE seguras
                 const targetDepId = matrixDepId || auth.dependenceId;
                 const getWhereClause = (tableAlias: string = "") => {
                     const prefix = tableAlias ? `${tableAlias}.` : "";
                     if (auth.isSuper && !matrixDepId) return "1=1";
-                    return targetDepId ? `${prefix}dependence_id = '${targetDepId}'` : "1=0";
+                    
+                    if (!targetDepId) return "1=0";
+                    const depIds = targetDepId.split(',');
+                    return depIds.length > 1 
+                        ? `${prefix}dependence_id IN (${depIds.map(id => `'${id}'`).join(',')})`
+                        : `${prefix}dependence_id = '${targetDepId}'`;
                 };
 
                 const whereClause = getWhereClause();
                 const whereClauseCt = getWhereClause("ct");
-                const matrixFilter = (auth.isSuper && !matrixDepId) ? '1=1' : `dt.id = '${targetDepId}'`;
+                
+                let matrixFilter = '1=1';
+                if (!(auth.isSuper && !matrixDepId) && targetDepId) {
+                    const depIds = targetDepId.split(',');
+                    matrixFilter = depIds.length > 1 
+                        ? `dt.id IN (${depIds.map(id => `'${id}'`).join(',')})`
+                        : `dt.id = '${targetDepId}'`;
+                }
 
                 // Fetch dependencies for dropdown
                 const depsRes = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`SELECT id, name FROM dependence_tbl ORDER BY name ASC`));
                 const depsD = await depsRes.json();
-                setAllDependencies(Array.isArray(depsD) ? depsD : []);
+                
+                let processedDeps = [];
+                if (Array.isArray(depsD)) {
+                    const uniqueMap = new Map();
+                    depsD.forEach((item: any) => {
+                        const key = (item.name || '').trim().toUpperCase();
+                        if (!uniqueMap.has(key)) {
+                            item.allIds = [item.id];
+                            uniqueMap.set(key, item);
+                        } else {
+                            uniqueMap.get(key).allIds.push(item.id);
+                        }
+                    });
+                    processedDeps = Array.from(uniqueMap.values()).map((item: any) => {
+                        item.id = item.allIds.join(',');
+                        return item;
+                    });
+                }
+                setAllDependencies(processedDeps);
 
                 // Default selected dep for SUPER
                 if (auth.isSuper && !matrixDepId && Array.isArray(depsD)) {
@@ -198,13 +229,13 @@ export default function ReporteriaSegmentadaClient() {
                         COUNT(DISTINCT rdt.id) as risk_count, AVG(rdt.impact * rdt.probability) as risk_score
                         FROM riesgos_judiciales_db.risk_action_tbl rat INNER JOIN riesgos_judiciales_db.risk_data_tbl rdt ON rat.risk_id = rdt.id
                         LEFT JOIN client_tbl ct ON ct.dependence_id = rat.dependence_id LEFT JOIN alert_tbl a ON a.client_id = ct.id LEFT JOIN dependence_tbl dt ON dt.id = rat.dependence_id
-                        WHERE rat.dependence_id IS NOT NULL AND ${auth.isSuper && !matrixDepId ? '1=1' : `rat.dependence_id = '${targetDepId}'`}
+                        WHERE rat.dependence_id IS NOT NULL AND ${auth.isSuper && !matrixDepId ? '1=1' : (targetDepId ? (targetDepId.split(',').length > 1 ? `rat.dependence_id IN (${targetDepId.split(',').map(id => `'${id}'`).join(',')})` : `rat.dependence_id = '${targetDepId}'`) : '1=0')}
                         GROUP BY dt.name, rat.dependence_id ORDER BY risk_score DESC
                     `)),
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
                         SELECT rdt.name as "Riesgo", rdt.description as "Descripcion", rdt.status as "Estado", rat.description as "Accion"
                         FROM riesgos_judiciales_db.risk_data_tbl rdt inner join riesgos_judiciales_db.risk_action_tbl rat on rat.risk_id = rdt.id
-                        WHERE ${auth.isSuper ? '1=1' : `rat.dependence_id = '${auth.dependenceId}'`}
+                        WHERE ${auth.isSuper ? '1=1' : (auth.dependenceId ? (auth.dependenceId.split(',').length > 1 ? `rat.dependence_id IN (${auth.dependenceId.split(',').map(id => `'${id}'`).join(',')})` : `rat.dependence_id = '${auth.dependenceId}'`) : '1=0')}
                     `)),
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
                         SELECT u.email as "Correo", u.name as "Nombre", u.area as "Area",
@@ -214,7 +245,7 @@ export default function ReporteriaSegmentadaClient() {
                         FROM users_app_tbl u
                         WHERE 
                         ${(auth.role === 'SUPER' || (auth.role === 'TRAINER' && canSeeAll)) ? 'u.role = "STUDENT"' : 
-                          (auth.role === 'ADMIN' || auth.role === 'TRAINER') ? `u.dependence_id = '${auth.dependenceId}' AND u.role = "STUDENT"` :
+                          (auth.role === 'ADMIN' || auth.role === 'TRAINER') ? (auth.dependenceId ? (auth.dependenceId.split(',').length > 1 ? `u.dependence_id IN (${auth.dependenceId.split(',').map(id => `'${id}'`).join(',')}) AND u.role = "STUDENT"` : `u.dependence_id = '${auth.dependenceId}' AND u.role = "STUDENT"`) : '1=0') :
                           `u.id = '${auth.userId}'`}
                     `))
                 ]);
@@ -416,7 +447,7 @@ export default function ReporteriaSegmentadaClient() {
                                     matrixMode === "deps" 
                                         ? data.riskMatrix.points
                                         : individualRisks
-                                            .filter(r => r.dependence_id === matrixDepId)
+                                            .filter(r => matrixDepId ? matrixDepId.split(',').includes(r.dependence_id) : false)
                                             .reduce((acc: RiskPoint[], r) => {
                                                 const existing = acc.find(a => a.id === r.id);
                                                 const config = EFFICACY_MAP[r.control_type] || { eff: 0.1, nature: "Preventivo" };

@@ -113,6 +113,7 @@ export default function ReporteriaGeneralClient() {
     const [individualRisks, setIndividualRisks] = useState<any[]>([]);
     const [allDependencies, setAllDependencies] = useState<any[]>([]);
     const [trainingData, setTrainingData] = useState<any[]>([]);
+    const [pdfDepsMatrixPoints, setPdfDepsMatrixPoints] = useState<RiskPoint[]>([]);
 
     const [globalDepId, setGlobalDepId] = useState<string>("");
     const [globalUserId, setGlobalUserId] = useState<string>("");
@@ -129,6 +130,10 @@ export default function ReporteriaGeneralClient() {
     const [dateFrom, setDateFrom] = useState<string>(""); // YYYY-MM-DD
     const [dateTo, setDateTo] = useState<string>(""); // YYYY-MM-DD
     const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+
+    const [showDepModal, setShowDepModal] = useState(false);
+    const [pendingPdfDownload, setPendingPdfDownload] = useState(false);
+    const [selectedDepForPdf, setSelectedDepForPdf] = useState<string>("");
 
     const isFirstRender = useRef(true);
     const [segLoading, setSegLoading] = useState(false);
@@ -149,20 +154,20 @@ export default function ReporteriaGeneralClient() {
 
     const auth = useMemo(() => {
         const rawRole = (searchParams.get("role_id") || "USER").toString().toUpperCase();
-        const role = rawRole === "1" || rawRole === "SUPER" ? "SUPER" : 
-                     rawRole === "2" || rawRole === "ADMIN" ? "ADMIN" :
-                     rawRole === "3" || rawRole === "TRAINER" ? "TRAINER" : "USER";
+        const role = rawRole === "1" || rawRole === "SUPER" ? "SUPER" :
+            rawRole === "2" || rawRole === "ADMIN" ? "ADMIN" :
+                rawRole === "3" || rawRole === "TRAINER" ? "TRAINER" : "USER";
         const depId = searchParams.get("dependence_id") || "";
         const uId = searchParams.get("user_id") || "";
-        
-        return { 
-            isSuper: role === "SUPER", 
-            isAdmin: role === "ADMIN", 
+
+        return {
+            isSuper: role === "SUPER",
+            isAdmin: role === "ADMIN",
             isTrainer: role === "TRAINER",
             isUser: role === "USER",
-            role, 
-            dependenceId: depId, 
-            userId: uId 
+            role,
+            dependenceId: depId,
+            userId: uId
         };
     }, [searchParams]);
 
@@ -194,14 +199,14 @@ export default function ReporteriaGeneralClient() {
                     const prefix = tableAlias ? `${tableAlias}.` : "";
                     const dateCol = `${prefix}created`;
                     let conditions = [];
-                    
+
                     if (dateFrom) conditions.push(`${dateCol} >= '${dateFrom}'`);
                     if (dateTo) conditions.push(`${dateCol} <= '${dateTo} 23:59:59'`);
 
                     if (conditions.length > 0) {
                         return `AND ${conditions.join(' AND ')}`;
                     }
-                    
+
                     return ""; // Removed datePeriod filtering to use it exclusively for grouping
                 };
 
@@ -209,7 +214,10 @@ export default function ReporteriaGeneralClient() {
                     const prefix = tableAlias ? `${tableAlias}.` : "";
                     let conditions = [];
                     if (auth.isSuper) {
-                        if (globalDepId && globalDepId !== "ALL") conditions.push(`${prefix}dependence_id = '${globalDepId}'`);
+                        if (globalDepId && globalDepId !== "ALL") {
+                            const depIds = globalDepId.split(',');
+                            conditions.push(depIds.length > 1 ? `${prefix}dependence_id IN (${depIds.map(id => `'${id}'`).join(',')})` : `${prefix}dependence_id = '${globalDepId}'`);
+                        }
                     } else {
                         conditions.push(`${prefix}dependence_id = '${auth.dependenceId}'`);
                     }
@@ -227,29 +235,60 @@ export default function ReporteriaGeneralClient() {
 
                 const getTimeSelect = (col: string) => {
                     switch (datePeriod) {
-                        case "monthly":    return `DATE_FORMAT(${col}, '%Y-%m')`;
-                        case "quarterly":  return `CONCAT(YEAR(${col}), '-Q', QUARTER(${col}))`;
+                        case "monthly": return `DATE_FORMAT(${col}, '%Y-%m')`;
+                        case "quarterly": return `CONCAT(YEAR(${col}), '-Q', QUARTER(${col}))`;
                         case "semiannual": return `CONCAT(YEAR(${col}), '-S', CEILING(MONTH(${col})/6))`;
-                        default:           return `DATE_FORMAT(${col}, '%Y')`;
+                        default: return `DATE_FORMAT(${col}, '%Y')`;
                     }
                 };
                 const timeExpr = getTimeSelect('c.created');
-                
+
                 // La matriz en perspectiva SUPER siempre debe mostrar todas las dependencias para permitir comparación
-                const matrixFilter = (viewRole === "SUPER") ? '1=1' : `dt.id = '${globalDepId || auth.dependenceId}'`;
+                const currentDepId = globalDepId || auth.dependenceId;
+                let matrixFilter = '1=1';
+                if (viewRole !== "SUPER" && currentDepId) {
+                    const depIds = currentDepId.split(',');
+                    matrixFilter = depIds.length > 1 
+                        ? `dt.id IN (${depIds.map(id => `'${id}'`).join(',')})`
+                        : `dt.id = '${currentDepId}'`;
+                }
 
                 // Fetch dependencies for dropdown
                 const depsRes = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`SELECT id, name FROM dependence_tbl ORDER BY name ASC`));
                 const depsD = await depsRes.json();
-                setAllDependencies(Array.isArray(depsD) ? depsD : []);
+                
+                let processedDeps = [];
+                if (Array.isArray(depsD)) {
+                    const uniqueMap = new Map();
+                    depsD.forEach((item: any) => {
+                        const key = (item.name || '').trim().toUpperCase();
+                        if (!uniqueMap.has(key)) {
+                            item.allIds = [item.id];
+                            uniqueMap.set(key, item);
+                        } else {
+                            uniqueMap.get(key).allIds.push(item.id);
+                        }
+                    });
+                    processedDeps = Array.from(uniqueMap.values()).map((item: any) => {
+                        item.id = item.allIds.join(',');
+                        return item;
+                    });
+                }
+                setAllDependencies(processedDeps);
 
                 // Fetch users for the current dependence (for ADMIN filtering)
                 if (globalDepId || auth.dependenceId) {
+                    const currentDepId = globalDepId || auth.dependenceId;
+                    const depIds = currentDepId.split(',');
+                    const condition = depIds.length > 1 
+                        ? `c.dependence_id IN (${depIds.map(id => `'${id}'`).join(',')})`
+                        : `c.dependence_id = '${currentDepId}'`;
+
                     const usersRes = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
                         SELECT DISTINCT c.users_id as user_id, u.email 
                         FROM client_tbl c
                         INNER JOIN users_app_tbl u ON c.users_id = u.id
-                        WHERE c.dependence_id = '${globalDepId || auth.dependenceId}' AND c.users_id IS NOT NULL
+                        WHERE ${condition} AND c.users_id IS NOT NULL
                     `));
                     const usersD = await usersRes.json();
                     setDependenceUsers(Array.isArray(usersD) ? usersD : []);
@@ -290,8 +329,8 @@ export default function ReporteriaGeneralClient() {
                 let pieQuery = "";
 
                 // Lógica de filtrado por dependencia compartida
-                const depId = (viewRole === "SUPER" && (globalDepId === "ALL" || globalDepId === "SYS_ADMIN")) 
-                    ? "" 
+                const depId = (viewRole === "SUPER" && (globalDepId === "ALL" || globalDepId === "SYS_ADMIN"))
+                    ? ""
                     : (globalDepId === "ALL" ? "" : (globalDepId || auth.dependenceId));
                 const depFilter = depId ? `WHERE c.dependence_id = '${depId}'` : "";
                 const depFilterJoin = depId ? `AND c.dependence_id = '${depId}'` : "";
@@ -306,7 +345,7 @@ export default function ReporteriaGeneralClient() {
                             0.5 as error_rate,
                             ROUND((SELECT COUNT(*) FROM client_tbl WHERE client_type != 'Natural' AND created >= DATE_FORMAT(CURDATE(), '%Y-%m-01')) * 0.45, 2) as api_costs
                     `;
-                    bar1Query = `SELECT 'Dilisense' as label, 45 as value UNION ALL SELECT 'Paco' as label, 30 as value UNION ALL SELECT 'Cruce Judicial' as label, 25 as value`; 
+                    bar1Query = `SELECT 'Dilisense' as label, 45 as value UNION ALL SELECT 'Paco' as label, 30 as value UNION ALL SELECT 'Cruce Judicial' as label, 25 as value`;
                     bar2Query = `SELECT 'Módulo Auth' as label, 120 as value UNION ALL SELECT 'Módulo PDF' as label, 450 as value UNION ALL SELECT 'Módulo Buscador' as label, 280 as value`; // Latencia
                     lineQuery = `SELECT DATE_FORMAT(created, '%H:00') as label, ROUND(COUNT(*), 0) as value FROM client_tbl WHERE created >= CURDATE() GROUP BY label ORDER BY label ASC`;
                     pieQuery = `SELECT 'Exitosas' as label, 98 as value UNION ALL SELECT 'Fallidas' as label, 2 as value`;
@@ -370,6 +409,7 @@ export default function ReporteriaGeneralClient() {
                                 WHEN 'rues_proponentes' THEN 'RUES Proponentes'
                                 WHEN 'dian_proveedores_ficticios' THEN 'DIAN Proveedores Ficticios'
                                 WHEN 'duck_duck_go' THEN 'Búsqueda Web'
+                                WHEN 'infobae' THEN 'Infobae'
                                 WHEN 'policia_antecendetes' THEN 'Policía Antecedentes'
                                 WHEN 'canadian_sanctions' THEN 'Sanciones Canadá'
                                 WHEN 'terrorist' THEN 'Lista Terroristas'
@@ -543,7 +583,7 @@ export default function ReporteriaGeneralClient() {
                     `;
                 }
 
-                const [kpiRes, bar1Res, bar2Res, lineRes, pieRes, matrixRes, tableRes, detailsRes, trainingRes] = await Promise.all([
+                const [kpiRes, bar1Res, bar2Res, lineRes, pieRes, matrixRes, tableRes, detailsRes, trainingRes, pdfDepsRes] = await Promise.all([
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(kpiQuery)),
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(bar1Query)),
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(bar2Query)),
@@ -575,14 +615,23 @@ export default function ReporteriaGeneralClient() {
                         COALESCE((SELECT AVG(tp.score) FROM training_progress_tbl tp WHERE tp.userId = u.id), 0) as "Puntaje Promedio"
                         FROM users_app_tbl u
                         WHERE 
-                        ${(viewRole === 'SUPER' || (viewRole === 'TRAINER' && searchParams.get("can_see_all") === "true")) ? 'u.role = "STUDENT"' : 
-                          (viewRole === 'ADMIN' || viewRole === 'TRAINER') ? `u.dependence_id = '${globalDepId || auth.dependenceId}' AND u.role = "STUDENT"` :
-                          `u.id = '${globalUserId || auth.userId}'`}
+                        ${(viewRole === 'SUPER' || (viewRole === 'TRAINER' && searchParams.get("can_see_all") === "true")) ? 'u.role = "STUDENT"' :
+                            (viewRole === 'ADMIN' || viewRole === 'TRAINER') ? `u.dependence_id = '${globalDepId || auth.dependenceId}' AND u.role = "STUDENT"` :
+                                `u.id = '${globalUserId || auth.userId}'`}
+                    `)),
+                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
+                        SELECT dt.id, dt.name, COALESCE(AVG(rdt.impact), 1) as x_impact,
+                        COALESCE((SELECT COUNT(a.id) FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id WHERE c.dependence_id = dt.id) * 5.0 / 
+                        NULLIF((SELECT COUNT(c.id) FROM client_tbl c WHERE c.dependence_id = dt.id), 0), 1) as y_prob
+                        FROM dependence_tbl dt LEFT JOIN riesgos_judiciales_db.risk_action_tbl rat ON rat.dependence_id = dt.id
+                        LEFT JOIN riesgos_judiciales_db.risk_data_tbl rdt ON rdt.id = rat.risk_id
+                        WHERE ${(viewRole === 'SUPER') ? '1=1' : `dt.id = '${globalDepId || auth.dependenceId}'`}
+                        GROUP BY dt.id, dt.name
                     `))
                 ]);
 
-                const [kpiD, bar1D, bar2D, lineD, pieD, matrixD, tableD, detailsD, trainingD] = await Promise.all([
-                    kpiRes.json(), bar1Res.json(), bar2Res.json(), lineRes.json(), pieRes.json(), matrixRes.json(), tableRes.json(), detailsRes.json(), trainingRes.json()
+                const [kpiD, bar1D, bar2D, lineD, pieD, matrixD, tableD, detailsD, trainingD, pdfDepsD] = await Promise.all([
+                    kpiRes.json(), bar1Res.json(), bar2Res.json(), lineRes.json(), pieRes.json(), matrixRes.json(), tableRes.json(), detailsRes.json(), trainingRes.json(), pdfDepsRes.json()
                 ]);
 
                 console.log("Training Metrics Data:", trainingD);
@@ -616,7 +665,6 @@ export default function ReporteriaGeneralClient() {
 
                 const points = Array.isArray(matrixD) ? matrixD.map((row: any) => ({
                     id: row.id, name: row.name,
-                    // Normalización: Impacto (0-20) -> 1-5, Probabilidad (0-4) -> 1-5
                     x: Math.min(5, Math.max(1, (parseFloat(row.x_impact || 1) / 20) * 5)),
                     y: Math.min(5, Math.max(1, (parseFloat(row.y_prob || 1) / 4) * 5))
                 })) : [];
@@ -625,6 +673,13 @@ export default function ReporteriaGeneralClient() {
                 setSelectedPoints(points.map(p => p.id));
                 setRiskDetailsRows(Array.isArray(detailsD) ? detailsD : []);
                 setTrainingData(Array.isArray(trainingD) ? trainingD : []);
+
+                const parsedPdfDeps = Array.isArray(pdfDepsD) ? pdfDepsD.map((row: any) => ({
+                    id: row.id, name: row.name,
+                    x: Math.min(5, Math.max(1, (parseFloat(row.x_impact || 1) / 20) * 5)),
+                    y: Math.min(5, Math.max(1, (parseFloat(row.y_prob || 1) / 4) * 5))
+                })) : [];
+                setPdfDepsMatrixPoints(parsedPdfDeps);
 
                 const isSysView = auth.isSuper && (globalDepId === "ALL" || allDependencies.find(d => d.id === globalDepId)?.name.toLowerCase().includes("administración sistema"));
 
@@ -647,7 +702,7 @@ export default function ReporteriaGeneralClient() {
                 if (viewRole !== "USER" && lineRows.length > 0 && (lineRows[0].email || lineRows[0].time_label)) {
                     const dates = [...new Set(lineRows.map((d: any) => d.time_label))].sort() as string[];
                     const emails = [...new Set(lineRows.map((d: any) => d.email))].filter(e => e) as string[];
-                    
+
                     if (emails.length > 0) {
                         finalLineData = dates.map(date => {
                             const row: any = { label: date };
@@ -680,30 +735,30 @@ export default function ReporteriaGeneralClient() {
                         xKey: "label",
                         series: [{ key: "value", label: "Consultas", color: "#3b82f6" }]
                     },
-                    barChart2: { 
-                        title: viewRole === "SUPER" && globalDepId === "SYS_ADMIN" ? "Latencia Media por Módulo (ms)" : 
-                               viewRole === "USER" ? "Distribución de Mis Alertas" : "Tipos de Alerta más Recurrentes",
-                        data: Array.isArray(bar2D) ? bar2D : [], 
-                        xKey: "label", 
-                        series: [{ key: "value", label: "Cantidad", color: "#f59e0b" }] 
+                    barChart2: {
+                        title: viewRole === "SUPER" && globalDepId === "SYS_ADMIN" ? "Latencia Media por Módulo (ms)" :
+                            viewRole === "USER" ? "Distribución de Mis Alertas" : "Tipos de Alerta más Recurrentes",
+                        data: Array.isArray(bar2D) ? bar2D : [],
+                        xKey: "label",
+                        series: [{ key: "value", label: "Cantidad", color: "#f59e0b" }]
                     },
-                    lineChart: { 
+                    lineChart: {
                         title: viewRole === "SUPER" && globalDepId === "SYS_ADMIN" ? "Tráfico de Peticiones (Hoy)" : "Evolución Temporal de Búsquedas",
-                        data: finalLineData, 
-                        xKey: "label", 
-                        lines: finalLineConfig 
+                        data: finalLineData,
+                        xKey: "label",
+                        lines: finalLineConfig
                     },
-                    pieChart: { 
+                    pieChart: {
                         title: viewRole === "SUPER" && globalDepId === "SYS_ADMIN" ? "Tasa de Éxito de Peticiones" : "Distribución del Nivel de Riesgo",
-                        data: processedPie, 
-                        nameKey: "label", 
-                        valueKey: "value" 
+                        data: processedPie,
+                        nameKey: "label",
+                        valueKey: "value"
                     },
                     riskMatrix: { title: "Matriz de Riesgos", points },
-                    table: { 
-                        title: "Análisis de Riesgos", 
-                        columns: [{ key: "dependence_name", header: "Dependencia" }, { key: "alert_description", header: "Nivel" }, { key: "risk_count", header: "Riesgos" }, { key: "risk_score", header: "Score" }], 
-                        rows: Array.isArray(tableD) ? tableD.map((r: any) => ({ ...r, risk_score: parseFloat(r.risk_score || 0).toFixed(2) })) : [] 
+                    table: {
+                        title: "Análisis de Riesgos",
+                        columns: [{ key: "dependence_name", header: "Dependencia" }, { key: "alert_description", header: "Nivel" }, { key: "risk_count", header: "Riesgos" }, { key: "risk_score", header: "Score" }],
+                        rows: Array.isArray(tableD) ? tableD.map((r: any) => ({ ...r, risk_score: parseFloat(r.risk_score || 0).toFixed(2) })) : []
                     }
                 });
             } catch (err) {
@@ -743,7 +798,7 @@ export default function ReporteriaGeneralClient() {
         let segDateFilterArray = [];
         if (dateFrom) segDateFilterArray.push(`c.created >= '${dateFrom}'`);
         if (dateTo) segDateFilterArray.push(`c.created <= '${dateTo} 23:59:59'`);
-        
+
         let segDateFilter = "";
         if (segDateFilterArray.length > 0) {
             segDateFilter = `AND ${segDateFilterArray.join(' AND ')}`;
@@ -768,7 +823,7 @@ export default function ReporteriaGeneralClient() {
         Promise.all(fetchPromises).then(results => {
             const newSegData: Record<string, any[]> = {};
             const newAlertData: Record<string, any[]> = {};
-            
+
             results.forEach(res => {
                 const rows = Array.isArray(res.data) ? res.data : (res.data?.results || []);
                 if (res.type === 'seg') {
@@ -789,17 +844,34 @@ export default function ReporteriaGeneralClient() {
         }).catch(console.error).finally(() => setSegLoading(false));
     }, [auth, globalDepId, viewRole, viewType, datePeriod, dateFrom, dateTo]); // Removido dimension de dependencias
 
+    useEffect(() => {
+        if (!loading && pendingPdfDownload) {
+            setPendingPdfDownload(false);
+            downloadPdf();
+        }
+    }, [loading, pendingPdfDownload]);
+
+    const handleDownloadClick = () => {
+        if (viewRole === 'SUPER' || allDependencies.length > 1) {
+            setSelectedDepForPdf(globalDepId);
+            setShowDepModal(true);
+        } else {
+            downloadPdf();
+        }
+    };
+
     if (loading) return <div className="p-8 text-center text-gray-400">Analizando estructura de riesgos...</div>;
     if (error) return <div className="p-8 text-red-500 bg-red-50 rounded-3xl border border-red-100">Error: {error}</div>;
 
     const downloadPdf = async () => {
         setIsDownloadingPdf(true);
+        // Esperamos 2 segundos para permitir que React renderice y Recharts anime los SVGs después del loading spinner
+        await new Promise(r => setTimeout(r, 2000));
+
         try {
             const getChartImage = async (id: string) => {
                 const el = document.getElementById(id);
                 if (!el) return null;
-                // Add a small delay to ensure rendering is complete
-                await new Promise(r => setTimeout(r, 100));
                 return await htmlToImage.toPng(el, { backgroundColor: '#ffffff', pixelRatio: 2 });
             };
 
@@ -807,7 +879,10 @@ export default function ReporteriaGeneralClient() {
             const bar2Img = await getChartImage('chart-bar2');
             const lineImg = await getChartImage('chart-line');
             const pieImg = await getChartImage('chart-pie');
-            
+            const riskMatrixDepsImg = await getChartImage('chart-risk-matrix-deps');
+            const riskMatrixInherentImg = await getChartImage('chart-risk-matrix-inherent');
+            const riskMatrixResidualImg = await getChartImage('chart-risk-matrix-residual');
+
             const segImages: Record<string, string | null> = {};
             for (const dim of Object.keys(dimensionExprMap)) {
                 segImages[`${dim}-1`] = await getChartImage(`chart-seg-1-${dim}`);
@@ -825,6 +900,9 @@ export default function ReporteriaGeneralClient() {
                 },
                 kpis: data?.kpis || [],
                 images: {
+                    riskMatrixDeps: riskMatrixDepsImg,
+                    riskMatrixInherent: riskMatrixInherentImg,
+                    riskMatrixResidual: riskMatrixResidualImg,
                     bar1: bar1Img,
                     bar2: bar2Img,
                     line: lineImg,
@@ -862,7 +940,7 @@ export default function ReporteriaGeneralClient() {
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
-            window.URL.revokeObjectURL(url);
+            setTimeout(() => window.URL.revokeObjectURL(url), 1000);
         } catch (error) {
             console.error(error);
             alert("Ocurrió un error al descargar el PDF. Asegúrate de que el backend (pdf-api) esté corriendo.");
@@ -879,8 +957,8 @@ export default function ReporteriaGeneralClient() {
                 <div className="flex items-center justify-between mb-8">
                     <div className="flex items-center gap-4">
                         <h2 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Reportería General</h2>
-                        <a 
-                            href={`/dashboard/risk-config?${searchParams.toString()}`} 
+                        <a
+                            href={`/dashboard/risk-config?${searchParams.toString()}`}
                             className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl text-xs font-black uppercase tracking-tighter hover:bg-gray-50 dark:hover:bg-gray-700 transition-all shadow-sm"
                         >
                             <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
@@ -978,10 +1056,10 @@ export default function ReporteriaGeneralClient() {
                             <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1">Período</label>
                             <div className="flex gap-1">
                                 {([
-                                    { id: "total",      label: "Total" },
+                                    { id: "total", label: "Total" },
                                     { id: "semiannual", label: "Sem." },
-                                    { id: "quarterly",  label: "Trim." },
-                                    { id: "monthly",    label: "Mes" },
+                                    { id: "quarterly", label: "Trim." },
+                                    { id: "monthly", label: "Mes" },
                                 ] as const).map(p => (
                                     <button
                                         key={p.id}
@@ -1047,12 +1125,12 @@ export default function ReporteriaGeneralClient() {
                         {/* Botón Descargar Reporte PDF */}
                         <div className="flex items-end h-full mt-auto">
                             <button
-                                onClick={downloadPdf}
+                                onClick={handleDownloadClick}
                                 disabled={isDownloadingPdf}
                                 className={cn(
                                     "flex items-center gap-2 px-4 py-2 border rounded-xl text-[10px] font-black uppercase tracking-tighter transition-all shadow-sm",
-                                    isDownloadingPdf 
-                                        ? "bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed dark:bg-gray-800 dark:border-gray-700 dark:text-gray-500" 
+                                    isDownloadingPdf
+                                        ? "bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed dark:bg-gray-800 dark:border-gray-700 dark:text-gray-500"
                                         : "bg-red-500 hover:bg-red-600 border-red-600 text-white"
                                 )}
                             >
@@ -1063,7 +1141,7 @@ export default function ReporteriaGeneralClient() {
                                     </>
                                 ) : (
                                     <>
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-file-text"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-file-text"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path d="M14 2v4a2 2 0 0 0 2 2h4" /><path d="M10 9H8" /><path d="M16 13H8" /><path d="M16 17H8" /></svg>
                                         Descargar PDF
                                     </>
                                 )}
@@ -1078,8 +1156,8 @@ export default function ReporteriaGeneralClient() {
                         onClick={() => setActiveTab("operacion")}
                         className={cn(
                             "px-6 py-3 rounded-2xl text-xs font-black uppercase tracking-widest transition-all",
-                            activeTab === "operacion" 
-                                ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20" 
+                            activeTab === "operacion"
+                                ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20"
                                 : "bg-white dark:bg-gray-800 text-gray-400 hover:text-gray-600 border border-gray-100 dark:border-gray-700"
                         )}
                     >
@@ -1089,8 +1167,8 @@ export default function ReporteriaGeneralClient() {
                         onClick={() => setActiveTab("desempeño")}
                         className={cn(
                             "px-6 py-3 rounded-2xl text-xs font-black uppercase tracking-widest transition-all",
-                            activeTab === "desempeño" 
-                                ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20" 
+                            activeTab === "desempeño"
+                                ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20"
                                 : "bg-white dark:bg-gray-800 text-gray-400 hover:text-gray-600 border border-gray-100 dark:border-gray-700"
                         )}
                     >
@@ -1133,8 +1211,8 @@ export default function ReporteriaGeneralClient() {
                                                     onClick={() => setMatrixMode(m.id as any)}
                                                     className={cn(
                                                         "flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-tighter transition-all",
-                                                        matrixMode === m.id 
-                                                            ? "bg-white dark:bg-gray-800 text-blue-500 shadow-sm border border-gray-100 dark:border-gray-700" 
+                                                        matrixMode === m.id
+                                                            ? "bg-white dark:bg-gray-800 text-blue-500 shadow-sm border border-gray-100 dark:border-gray-700"
                                                             : "text-gray-400 hover:text-gray-600"
                                                     )}
                                                 >
@@ -1220,14 +1298,14 @@ export default function ReporteriaGeneralClient() {
                                                     <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Dependencias</p>
                                                     <div className="flex gap-3">
                                                         {auth.isSuper && (
-                                                            <button 
+                                                            <button
                                                                 onClick={() => setSelectedPoints(points.map(p => p.id))}
                                                                 className="text-[10px] font-black text-blue-500 hover:text-blue-600 uppercase tracking-tighter transition-colors"
                                                             >
                                                                 Todas
                                                             </button>
                                                         )}
-                                                        <button 
+                                                        <button
                                                             onClick={() => setSelectedPoints([])}
                                                             className="text-[10px] font-black text-gray-400 hover:text-gray-600 uppercase tracking-tighter transition-colors"
                                                         >
@@ -1261,7 +1339,7 @@ export default function ReporteriaGeneralClient() {
                             </div>
 
                             {/* Matriz de Riesgo */}
-                            <div className="p-8 bg-gray-50/50 dark:bg-gray-900/20">
+                            <div id="chart-risk-matrix" className="p-8 bg-gray-50/50 dark:bg-gray-900/20">
                                 {matrixMode === "training" ? (
                                     <div className="space-y-6">
                                         <div className="flex items-center justify-between">
@@ -1282,8 +1360,8 @@ export default function ReporteriaGeneralClient() {
                                                 { key: "Completados", header: "Completados" },
                                                 { key: "Total", header: "Total Cursos" },
                                                 { key: "Puntaje Promedio", header: "Promedio" },
-                                                { 
-                                                    key: "Progreso", 
+                                                {
+                                                    key: "Progreso",
                                                     header: "Progreso %",
                                                     className: "w-48"
                                                 }
@@ -1294,8 +1372,8 @@ export default function ReporteriaGeneralClient() {
                                                 "Progreso": (
                                                     <div className="flex items-center gap-2">
                                                         <div className="flex-1 h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                                                            <div 
-                                                                className="h-full bg-blue-500 transition-all duration-500" 
+                                                            <div
+                                                                className="h-full bg-blue-500 transition-all duration-500"
                                                                 style={{ width: `${(row.Completados / Math.max(1, row.Total)) * 100}%` }}
                                                             />
                                                         </div>
@@ -1309,17 +1387,17 @@ export default function ReporteriaGeneralClient() {
                                     </div>
                                 ) : (
                                     <RiskMatrixScatter
-                                        key={`${matrixMode}-${matrixDepId}-${points.map(p => p.id).join('-')}`} 
+                                        key={`${matrixMode}-${matrixDepId}-${points.map(p => p.id).join('-')}`}
                                         title={
                                             matrixMode === "deps" ? "Matriz de Riesgos por Dependencia" :
-                                            matrixMode === "inherent" ? `Riesgos Inherentes: ${allDependencies.find(d => d.id === matrixDepId)?.name || ""}` :
-                                            `Riesgos Residuales: ${allDependencies.find(d => d.id === matrixDepId)?.name || ""}`
+                                                matrixMode === "inherent" ? `Riesgos Inherentes: ${allDependencies.find(d => d.id === matrixDepId)?.name || ""}` :
+                                                    `Riesgos Residuales: ${allDependencies.find(d => d.id === matrixDepId)?.name || ""}`
                                         }
                                         points={
-                                            matrixMode === "deps" 
-                                                ? points.filter(p => 
-                                                    selectedPoints.includes(p.id) && 
-                                                    impactFilter.includes(Math.round(p.x)) && 
+                                            matrixMode === "deps"
+                                                ? points.filter(p =>
+                                                    selectedPoints.includes(p.id) &&
+                                                    impactFilter.includes(Math.round(p.x)) &&
                                                     probFilter.includes(Math.round(p.y))
                                                 )
                                                 : individualRisks
@@ -1404,7 +1482,7 @@ export default function ReporteriaGeneralClient() {
                                         { id: "channel", label: "Canal" },
                                         { id: "complex_jurisdictions", label: "Jurisdicción" }
                                     ].map(opt => (
-                                        <button 
+                                        <button
                                             key={opt.id}
                                             onClick={() => setDimension(opt.id)}
                                             className={cn(
@@ -1450,10 +1528,10 @@ export default function ReporteriaGeneralClient() {
                                             <div id={`chart-seg-1-${dimKey}`} className="bg-white dark:bg-gray-800 rounded-3xl p-2">
                                                 <ChartCard title={`Segmentación por ${config.label} (${viewType === "consultas" ? "Búsquedas" : "Clientes"})`} height="auto">
                                                     <div className="h-[280px]">
-                                                        <BarChartGeneric 
-                                                            data={dimSegData} 
-                                                            xKey="label" 
-                                                            series={[{ key: "value", label: viewType === "consultas" ? "Búsquedas" : "Clientes", color: "#a855f7" }]} 
+                                                        <BarChartGeneric
+                                                            data={dimSegData}
+                                                            xKey="label"
+                                                            series={[{ key: "value", label: viewType === "consultas" ? "Búsquedas" : "Clientes", color: "#a855f7" }]}
                                                         />
                                                     </div>
                                                 </ChartCard>
@@ -1463,14 +1541,14 @@ export default function ReporteriaGeneralClient() {
                                             <div id={`chart-seg-2-${dimKey}`} className="bg-white dark:bg-gray-800 rounded-3xl p-2">
                                                 <ChartCard title={`Alertas por ${config.label} y Nivel`} height="auto">
                                                     <div className="h-[280px]">
-                                                        <BarChartGeneric 
-                                                            data={dimAlertData} 
-                                                            xKey="label" 
+                                                        <BarChartGeneric
+                                                            data={dimAlertData}
+                                                            xKey="label"
                                                             series={[
                                                                 { key: "Alto", label: "Alto", color: "#ef4444" },
                                                                 { key: "Medio", label: "Medio", color: "#f97316" },
                                                                 { key: "Bajo", label: "Bajo", color: "#10b981" }
-                                                            ]} 
+                                                            ]}
                                                         />
                                                     </div>
                                                 </ChartCard>
@@ -1485,15 +1563,15 @@ export default function ReporteriaGeneralClient() {
                         <div className="flex flex-col gap-8 mb-8 animate-in fade-in slide-in-from-bottom-6 duration-700 delay-300">
                             <div>
                                 <ChartCard title={data.table.title} height="auto">
-                                    <TableGeneric 
+                                    <TableGeneric
                                         columns={[
-                                            { 
-                                                key: "dependence_name", 
+                                            {
+                                                key: "dependence_name",
                                                 header: "Dependencia",
                                                 render: (val) => <span className="font-black text-blue-600 dark:text-blue-400">{val}</span>
                                             },
-                                            { 
-                                                key: "alert_description", 
+                                            {
+                                                key: "alert_description",
                                                 header: "Nivel de Riesgo",
                                                 render: (val) => {
                                                     const colors: any = {
@@ -1508,29 +1586,29 @@ export default function ReporteriaGeneralClient() {
                                                 }
                                             },
                                             { key: "risk_count", header: "Alertas" },
-                                            { 
-                                                key: "risk_score", 
+                                            {
+                                                key: "risk_score",
                                                 header: "Score",
                                                 render: (val) => <span className={cn("font-black", val > 7 ? "text-red-500" : "text-gray-500")}>{Math.round(val)}</span>
                                             }
-                                        ]} 
-                                        rows={data.table.rows || []} 
+                                        ]}
+                                        rows={data.table.rows || []}
                                     />
                                 </ChartCard>
                             </div>
 
                             <div>
                                 <ChartCard title="Detalles de Riesgos" height="auto">
-                                    <TableGeneric 
+                                    <TableGeneric
                                         columns={[
-                                            { 
-                                                key: "Riesgo", 
+                                            {
+                                                key: "Riesgo",
                                                 header: "Riesgo",
                                                 render: (val) => <span className="font-black text-gray-800 dark:text-gray-200">{val}</span>
                                             },
                                             { key: "Descripcion", header: "Descripción" },
-                                            { 
-                                                key: "Estado", 
+                                            {
+                                                key: "Estado",
                                                 header: "Estado",
                                                 render: (val) => (
                                                     <span className={cn(
@@ -1542,8 +1620,8 @@ export default function ReporteriaGeneralClient() {
                                                 )
                                             },
                                             { key: "Accion", header: "Acción Mitigante" }
-                                        ]} 
-                                        rows={riskDetailsRows} 
+                                        ]}
+                                        rows={riskDetailsRows}
                                     />
                                 </ChartCard>
                             </div>
@@ -1555,18 +1633,18 @@ export default function ReporteriaGeneralClient() {
                         {viewRole === "SUPER" && globalDepId === "SYS_ADMIN" ? (
                             <div className="grid grid-cols-1 gap-8 mb-8">
                                 <ChartCard title="Logs de Auditoría y Errores Recientes">
-                                    <TableGeneric 
+                                    <TableGeneric
                                         columns={[
                                             { key: "code", header: "Código" },
                                             { key: "module", header: "Módulo" },
                                             { key: "message", header: "Mensaje" },
                                             { key: "ts", header: "Timestamp" }
-                                        ]} 
+                                        ]}
                                         rows={[
                                             { code: "500", module: "AUTH_API", message: "Timeout connecting to provider", ts: "2024-05-08 10:20:15" },
                                             { code: "404", module: "PDF_GEN", message: "Resource not found", ts: "2024-05-08 09:15:22" },
                                             { code: "503", module: "DILISENSE", message: "Service Unavailable", ts: "2024-05-08 08:45:10" }
-                                        ]} 
+                                        ]}
                                     />
                                 </ChartCard>
                             </div>
@@ -1575,8 +1653,8 @@ export default function ReporteriaGeneralClient() {
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
                                     <ChartCard title="Desempeño vs Equipo (T. Ejecución)">
                                         <div className="h-64">
-                                            <GaugeChartGeneric 
-                                                value={Math.round((data.barChart1.data.find(d => d.label === 'Mio')?.value / data.barChart1.data.find(d => d.label === 'Equipo')?.value) * 100) || 85} 
+                                            <GaugeChartGeneric
+                                                value={Math.round((data.barChart1.data.find(d => d.label === 'Mio')?.value / data.barChart1.data.find(d => d.label === 'Equipo')?.value) * 100) || 85}
                                                 label="Eficiencia de Caso"
                                                 color="#10b981"
                                             />
@@ -1614,8 +1692,8 @@ export default function ReporteriaGeneralClient() {
                                                 { key: "Completados", header: "Completados" },
                                                 { key: "Total", header: "Total Cursos" },
                                                 { key: "Puntaje Promedio", header: "Promedio" },
-                                                { 
-                                                    key: "Progreso", 
+                                                {
+                                                    key: "Progreso",
                                                     header: "Progreso %",
                                                     className: "w-48"
                                                 }
@@ -1626,8 +1704,8 @@ export default function ReporteriaGeneralClient() {
                                                 "Progreso": (
                                                     <div className="flex items-center gap-2">
                                                         <div className="flex-1 h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                                                            <div 
-                                                                className="h-full bg-blue-500 transition-all duration-500" 
+                                                            <div
+                                                                className="h-full bg-blue-500 transition-all duration-500"
                                                                 style={{ width: `${(row.Completados / Math.max(1, row.Total)) * 100}%` }}
                                                             />
                                                         </div>
@@ -1644,14 +1722,14 @@ export default function ReporteriaGeneralClient() {
                         ) : (
                             <div className="grid grid-cols-1 gap-8 mb-8">
                                 <ChartCard title="Desempeño Detallado por Analista (USER)">
-                                    <TableGeneric 
+                                    <TableGeneric
                                         columns={[
                                             { key: "label", header: "Analista (Email)" },
                                             { key: "value", header: "Consultas Totales" },
                                             { key: "time", header: "T. Promedio" },
                                             { key: "status", header: "Estado Hoy" }
-                                        ]} 
-                                        rows={data.barChart1.data.map(d => ({ ...d, time: "2.5 min", status: "Activo" }))} 
+                                        ]}
+                                        rows={data.barChart1.data.map(d => ({ ...d, time: "2.5 min", status: "Activo" }))}
                                     />
                                 </ChartCard>
 
@@ -1664,8 +1742,8 @@ export default function ReporteriaGeneralClient() {
                                             { key: "Completados", header: "Completados" },
                                             { key: "Total", header: "Total Cursos" },
                                             { key: "Puntaje Promedio", header: "Promedio" },
-                                            { 
-                                                key: "Progreso", 
+                                            {
+                                                key: "Progreso",
                                                 header: "Progreso %",
                                                 className: "w-48"
                                             }
@@ -1676,8 +1754,8 @@ export default function ReporteriaGeneralClient() {
                                             "Progreso": (
                                                 <div className="flex items-center gap-2">
                                                     <div className="flex-1 h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                                                        <div 
-                                                            className="h-full bg-blue-500 transition-all duration-500" 
+                                                        <div
+                                                            className="h-full bg-blue-500 transition-all duration-500"
                                                             style={{ width: `${(row.Completados / Math.max(1, row.Total)) * 100}%` }}
                                                         />
                                                     </div>
@@ -1694,6 +1772,107 @@ export default function ReporteriaGeneralClient() {
 
                     </div>
                 )}
+            </div>
+
+            {/* Modal de Selección de Dependencia para PDF */}
+            {showDepModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                    <div className="bg-white dark:bg-gray-800 rounded-3xl p-6 w-full max-w-md shadow-2xl border border-gray-100 dark:border-gray-700">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-lg font-black uppercase text-gray-900 dark:text-gray-100">Descargar Informe PDF</h3>
+                            <button onClick={() => setShowDepModal(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-x"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                            </button>
+                        </div>
+                        <p className="text-sm text-gray-500 mb-6 font-medium">Por favor selecciona la dependencia para la cual deseas generar el informe.</p>
+                        <select
+                            value={selectedDepForPdf}
+                            onChange={(e) => setSelectedDepForPdf(e.target.value)}
+                            className="w-full mb-6 px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-sm font-bold text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                            <option value="">Selecciona una dependencia</option>
+                            {viewRole === "SUPER" && <option value="ALL">Todas las Dependencias</option>}
+                            {allDependencies.map(dep => (
+                                <option key={dep.id} value={dep.id}>{dep.name}</option>
+                            ))}
+                        </select>
+                        <div className="flex justify-end gap-3">
+                            <button
+                                onClick={() => setShowDepModal(false)}
+                                className="px-4 py-2 rounded-xl text-xs font-bold text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors uppercase tracking-widest"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={() => {
+                                    if (selectedDepForPdf) {
+                                        setGlobalDepId(selectedDepForPdf);
+                                        setShowDepModal(false);
+                                        setPendingPdfDownload(true);
+                                    }
+                                }}
+                                disabled={!selectedDepForPdf}
+                                className="px-4 py-2 rounded-xl text-xs font-black bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-md uppercase tracking-widest disabled:opacity-50"
+                            >
+                                Descargar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Contenedor Oculto para exportación PDF (Todas las matrices) */}
+            <div className="fixed top-0 left-[-9999px] w-[800px] bg-white z-0">
+                <div id="chart-risk-matrix-deps" className="p-8 bg-white">
+                    <RiskMatrixScatter
+                        key={`pdf-deps-${globalDepId}`}
+                        title="Matriz de Riesgos por Dependencia"
+                        points={pdfDepsMatrixPoints.filter(p => 
+                            globalDepId === 'ALL' || globalDepId.split(',').includes(p.id)
+                        )}
+                    />
+                </div>
+                <div id="chart-risk-matrix-inherent" className="p-8 bg-white">
+                    <RiskMatrixScatter
+                        key={`pdf-inherent-${globalDepId}`}
+                        title={`Riesgos Inherentes: ${allDependencies.find(d => d.id === globalDepId)?.name || (globalDepId === 'ALL' ? 'Todas' : '')}`}
+                        points={individualRisks.filter(r => globalDepId === 'ALL' ? true : globalDepId.split(',').includes(r.dependence_id)).reduce((acc: RiskPoint[], r) => {
+                            const existing = acc.find(a => a.id === r.id);
+                            if (existing) return acc;
+                            const p: RiskPoint = { id: r.id.toString(), name: r.name, x: Math.min(5, Math.max(1, (r.impact / 20) * 5)), y: Math.min(5, Math.max(1, (r.probability / 4) * 5)) };
+                            acc.push(p);
+                            return acc;
+                        }, [])}
+                    />
+                </div>
+                <div id="chart-risk-matrix-residual" className="p-8 bg-white">
+                    <RiskMatrixScatter
+                        key={`pdf-residual-${globalDepId}`}
+                        title={`Riesgos Residuales: ${allDependencies.find(d => d.id === globalDepId)?.name || (globalDepId === 'ALL' ? 'Todas' : '')}`}
+                        points={individualRisks.filter(r => globalDepId === 'ALL' ? true : globalDepId.split(',').includes(r.dependence_id)).reduce((acc: RiskPoint[], r) => {
+                            const existing = acc.find(a => a.id === r.id);
+                            const config = EFFICACY_MAP[r.control_type] || { eff: 0.1, nature: "Preventivo" };
+                            if (existing) {
+                                if (config.nature === "Preventivo") (existing as any).maxProbEff = Math.max((existing as any).maxProbEff || 0, config.eff);
+                                else (existing as any).maxImpEff = Math.max((existing as any).maxImpEff || 0, config.eff);
+                                const resImpact = r.impact * (1 - ((existing as any).maxImpEff || 0));
+                                const resProb = r.probability * (1 - ((existing as any).maxProbEff || 0));
+                                existing.x = Math.min(5, Math.max(1, (resImpact / 20) * 5));
+                                existing.y = Math.min(5, Math.max(1, (resProb / 4) * 5));
+                                return acc;
+                            }
+                            const probEff = config.nature === "Preventivo" ? config.eff : 0;
+                            const impEff = config.nature === "Detectivo" ? config.eff : 0;
+                            const resImpact = r.impact * (1 - impEff);
+                            const resProb = r.probability * (1 - probEff);
+                            const p: RiskPoint = { id: r.id.toString(), name: r.name, x: Math.min(5, Math.max(1, (resImpact / 20) * 5)), y: Math.min(5, Math.max(1, (resProb / 4) * 5)) };
+                            (p as any).maxProbEff = probEff;
+                            (p as any).maxImpEff = impEff;
+                            acc.push(p);
+                            return acc;
+                        }, [])}
+                    />
+                </div>
             </div>
         </div>
     );
