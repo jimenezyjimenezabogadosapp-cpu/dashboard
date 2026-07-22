@@ -197,11 +197,13 @@ export default function ReporteriaGeneralClient() {
 
                 const getDateFilter = (tableAlias: string = "c") => {
                     const prefix = tableAlias ? `${tableAlias}.` : "";
-                    const dateCol = `${prefix}created`;
                     let conditions = [];
-
-                    if (dateFrom) conditions.push(`${dateCol} >= '${dateFrom}'`);
-                    if (dateTo) conditions.push(`${dateCol} <= '${dateTo} 23:59:59'`);
+                    if (dateFrom) conditions.push(`${prefix}created >= '${dateFrom} 00:00:00'`);
+                    if (dateTo) conditions.push(`${prefix}created <= '${dateTo} 23:59:59'`);
+                    
+                    // Add filters to match data-searched logic (no child records, no pending docs)
+                    conditions.push(`${prefix}parent_client_id IS NULL`);
+                    conditions.push(`(${prefix}workflow_status NOT IN ('PENDING_DOCS', 'INVITED') OR ${prefix}workflow_status IS NULL)`);
 
                     if (conditions.length > 0) {
                         return `AND ${conditions.join(' AND ')}`;
@@ -332,8 +334,9 @@ export default function ReporteriaGeneralClient() {
                 const depId = (viewRole === "SUPER" && (globalDepId === "ALL" || globalDepId === "SYS_ADMIN"))
                     ? ""
                     : (globalDepId === "ALL" ? "" : (globalDepId || auth.dependenceId));
-                const depFilter = depId ? `WHERE c.dependence_id = '${depId}'` : "";
-                const depFilterJoin = depId ? `AND c.dependence_id = '${depId}'` : "";
+                const depIds = depId ? depId.split(',') : [];
+                const depFilter = depIds.length > 1 ? `WHERE c.dependence_id IN (${depIds.map(id => `'${id}'`).join(',')})` : (depId ? `WHERE c.dependence_id = '${depId}'` : "");
+                const depFilterJoin = depIds.length > 1 ? `AND c.dependence_id IN (${depIds.map(id => `'${id}'`).join(',')})` : (depId ? `AND c.dependence_id = '${depId}'` : "");
 
                 if (viewRole === "SUPER" && globalDepId === "SYS_ADMIN") {
                     // PERSPECTIVA SUPER - ADMINISTRADOR DE SISTEMAS (SALUD TÉCNICA)
@@ -786,8 +789,9 @@ export default function ReporteriaGeneralClient() {
         const depId = (viewRole === "SUPER" && (globalDepId === "ALL" || globalDepId === "SYS_ADMIN"))
             ? ""
             : (globalDepId === "ALL" ? "" : (globalDepId || auth.dependenceId));
-        const depFilter = depId ? `WHERE c.dependence_id = '${depId}'` : "";
-        const depFilterJoin = depId ? `AND c.dependence_id = '${depId}'` : "";
+        const depIds = depId ? depId.split(',') : [];
+        const depFilter = depIds.length > 1 ? `WHERE c.dependence_id IN (${depIds.map(id => `'${id}'`).join(',')})` : (depId ? `WHERE c.dependence_id = '${depId}'` : "");
+        const depFilterJoin = depIds.length > 1 ? `AND c.dependence_id IN (${depIds.map(id => `'${id}'`).join(',')})` : (depId ? `AND c.dependence_id = '${depId}'` : "");
         const countExpr = viewType === "consultas" ? "COUNT(*)" : "COUNT(DISTINCT c.id_number)";
 
 
@@ -900,12 +904,9 @@ export default function ReporteriaGeneralClient() {
                 },
                 kpis: data?.kpis || [],
                 images: {
-                    riskMatrixDeps: riskMatrixDepsImg,
                     riskMatrixInherent: riskMatrixInherentImg,
                     riskMatrixResidual: riskMatrixResidualImg,
                     bar1: bar1Img,
-                    bar2: bar2Img,
-                    line: lineImg,
                     pie: pieImg,
                     ...segImages
                 }

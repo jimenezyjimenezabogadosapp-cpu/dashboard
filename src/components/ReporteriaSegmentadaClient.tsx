@@ -122,13 +122,17 @@ export default function ReporteriaSegmentadaClient() {
                 const targetDepId = matrixDepId || auth.dependenceId;
                 const getWhereClause = (tableAlias: string = "") => {
                     const prefix = tableAlias ? `${tableAlias}.` : "";
-                    if (auth.isSuper && !matrixDepId) return "1=1";
+                    const strictFilters = `${prefix}parent_client_id IS NULL AND (${prefix}workflow_status NOT IN ('PENDING_DOCS', 'INVITED') OR ${prefix}workflow_status IS NULL)`;
+                    
+                    if (auth.isSuper && !matrixDepId) return `1=1 AND ${strictFilters}`;
                     
                     if (!targetDepId) return "1=0";
                     const depIds = targetDepId.split(',');
-                    return depIds.length > 1 
+                    let depCondition = depIds.length > 1 
                         ? `${prefix}dependence_id IN (${depIds.map(id => `'${id}'`).join(',')})`
                         : `${prefix}dependence_id = '${targetDepId}'`;
+                    
+                    return `${depCondition} AND ${prefix}parent_client_id IS NULL AND (${prefix}workflow_status NOT IN ('PENDING_DOCS', 'INVITED') OR ${prefix}workflow_status IS NULL)`;
                 };
 
                 const whereClause = getWhereClause();
