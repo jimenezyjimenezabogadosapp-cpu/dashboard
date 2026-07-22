@@ -200,7 +200,7 @@ export default function ReporteriaGeneralClient() {
                     let conditions = [];
                     if (dateFrom) conditions.push(`${prefix}created >= '${dateFrom} 00:00:00'`);
                     if (dateTo) conditions.push(`${prefix}created <= '${dateTo} 23:59:59'`);
-                    
+
                     // Add filters to match data-searched logic (no child records, no pending docs)
                     conditions.push(`${prefix}parent_client_id IS NULL`);
                     conditions.push(`(${prefix}workflow_status NOT IN ('PENDING_DOCS', 'INVITED') OR ${prefix}workflow_status IS NULL)`);
@@ -250,7 +250,7 @@ export default function ReporteriaGeneralClient() {
                 let matrixFilter = '1=1';
                 if (viewRole !== "SUPER" && currentDepId) {
                     const depIds = currentDepId.split(',');
-                    matrixFilter = depIds.length > 1 
+                    matrixFilter = depIds.length > 1
                         ? `dt.id IN (${depIds.map(id => `'${id}'`).join(',')})`
                         : `dt.id = '${currentDepId}'`;
                 }
@@ -258,7 +258,7 @@ export default function ReporteriaGeneralClient() {
                 // Fetch dependencies for dropdown
                 const depsRes = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`SELECT id, name FROM dependence_tbl ORDER BY name ASC`));
                 const depsD = await depsRes.json();
-                
+
                 let processedDeps = [];
                 if (Array.isArray(depsD)) {
                     const uniqueMap = new Map();
@@ -282,7 +282,7 @@ export default function ReporteriaGeneralClient() {
                 if (globalDepId || auth.dependenceId) {
                     const currentDepId = globalDepId || auth.dependenceId;
                     const depIds = currentDepId.split(',');
-                    const condition = depIds.length > 1 
+                    const condition = depIds.length > 1
                         ? `c.dependence_id IN (${depIds.map(id => `'${id}'`).join(',')})`
                         : `c.dependence_id = '${currentDepId}'`;
 
@@ -848,31 +848,50 @@ export default function ReporteriaGeneralClient() {
         }).catch(console.error).finally(() => setSegLoading(false));
     }, [auth, globalDepId, viewRole, viewType, datePeriod, dateFrom, dateTo]); // Removido dimension de dependencias
 
-    useEffect(() => {
-        if (!loading && pendingPdfDownload) {
-            setPendingPdfDownload(false);
-            downloadPdf();
-        }
-    }, [loading, pendingPdfDownload]);
-
     const handleDownloadClick = () => {
         if (viewRole === 'SUPER' || allDependencies.length > 1) {
             setSelectedDepForPdf(globalDepId);
             setShowDepModal(true);
         } else {
-            downloadPdf();
+            downloadPdf(globalDepId);
         }
     };
 
     if (loading) return <div className="p-8 text-center text-gray-400">Analizando estructura de riesgos...</div>;
     if (error) return <div className="p-8 text-red-500 bg-red-50 rounded-3xl border border-red-100">Error: {error}</div>;
 
-    const downloadPdf = async () => {
+    const downloadPdf = async (depIdForPdf: string) => {
         setIsDownloadingPdf(true);
-        // Esperamos 2 segundos para permitir que React renderice y Recharts anime los SVGs después del loading spinner
+        
+        // Wait for Recharts to animate
         await new Promise(r => setTimeout(r, 2000));
 
         try {
+            // Re-fetch the KPIs to ensure we have the absolute latest real data for the specific dependency
+            // ignoring any frontend state filters that might be applied.
+            const userKey = "019bdbff-d27c-7583-b76f-80edd5ae064e";
+            
+            const depIds = depIdForPdf ? depIdForPdf.split(',') : [];
+            const depFilterPdf = depIds.length > 1 ? `dependence_id IN (${depIds.map(id => `'${id}'`).join(',')})` : `dependence_id = '${depIdForPdf}'`;
+            
+            // Query without the child/pending filter to get the RAW total
+            const realKpisQuery = `
+                SELECT 
+                    ROUND((SELECT COUNT(*) FROM client_tbl WHERE ${depFilterPdf}), 0) as total_consultas,
+                    ROUND((SELECT COUNT(*) FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id WHERE a.level = '1' AND ${depFilterPdf}), 0) as alertas_criticas,
+                    ROUND((SELECT COUNT(DISTINCT users_id) FROM client_tbl WHERE ${depFilterPdf}), 0) as analistas_activos,
+                    ROUND((SELECT AVG(execution_time) FROM client_tbl WHERE ${depFilterPdf}), 1) as tiempo_promedio_caso
+            `;
+            const kpisRes = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(realKpisQuery));
+            const kpisD = await kpisRes.json();
+            
+            const realKpis = [
+                { title: "Total Consultas", value: kpisD[0]?.total_consultas || 0 },
+                { title: "Alertas Críticas", value: kpisD[0]?.alertas_criticas || 0 },
+                { title: "Analistas Activos", value: kpisD[0]?.analistas_activos || 0 },
+                { title: "T. Promedio (min)", value: `${kpisD[0]?.tiempo_promedio_caso || 0} min` }
+            ];
+
             const getChartImage = async (id: string) => {
                 const el = document.getElementById(id);
                 if (!el) return null;
@@ -893,14 +912,14 @@ export default function ReporteriaGeneralClient() {
                 segImages[`${dim}-2`] = await getChartImage(`chart-seg-2-${dim}`);
             }
 
-            const inherentPoints = individualRisks.filter(r => globalDepId === 'ALL' ? true : globalDepId.split(',').includes(r.dependence_id)).reduce((acc: any[], r) => {
+            const inherentPoints = individualRisks.filter(r => depIdForPdf === 'ALL' ? true : depIdForPdf.split(',').includes(r.dependence_id)).reduce((acc: any[], r) => {
                 const existing = acc.find(a => a.id === r.id);
                 if (existing) return acc;
                 acc.push({ id: r.id.toString(), name: r.name, description: r.risk_desc, x: Math.min(5, Math.max(1, (r.impact / 20) * 5)), y: Math.min(5, Math.max(1, (r.probability / 4) * 5)) });
                 return acc;
             }, []);
 
-            const residualPoints = individualRisks.filter(r => globalDepId === 'ALL' ? true : globalDepId.split(',').includes(r.dependence_id)).reduce((acc: any[], r) => {
+            const residualPoints = individualRisks.filter(r => depIdForPdf === 'ALL' ? true : depIdForPdf.split(',').includes(r.dependence_id)).reduce((acc: any[], r) => {
                 const existing = acc.find(a => a.id === r.id);
                 const config = EFFICACY_MAP[r.control_type] || { eff: 0.1, nature: "Preventivo" };
                 if (existing) {
@@ -924,7 +943,7 @@ export default function ReporteriaGeneralClient() {
             const payload = {
                 role: viewRole,
                 filters: {
-                    dependencia: allDependencies.find(d => d.id === globalDepId)?.name || (globalDepId === 'ALL' ? 'Todas las Dependencias' : globalDepId === 'SYS_ADMIN' ? 'Administración de Sistemas' : 'No seleccionada'),
+                    dependencia: allDependencies.find(d => d.id === depIdForPdf)?.name || (depIdForPdf === 'ALL' ? 'Todas las Dependencias' : depIdForPdf === 'SYS_ADMIN' ? 'Administración de Sistemas' : 'No seleccionada'),
                     usuario: globalUserId || 'Todos los usuarios',
                     fechaDesde: dateFrom || 'Sin límite',
                     fechaHasta: dateTo || 'Sin límite',
@@ -934,7 +953,7 @@ export default function ReporteriaGeneralClient() {
                     inherent: inherentPoints,
                     residual: residualPoints
                 },
-                kpis: data?.kpis || [],
+                kpis: realKpis,
                 images: {
                     riskMatrixInherent: riskMatrixInherentImg,
                     riskMatrixResidual: riskMatrixResidualImg,
@@ -1814,7 +1833,7 @@ export default function ReporteriaGeneralClient() {
                         <div className="flex items-center justify-between mb-4">
                             <h3 className="text-lg font-black uppercase text-gray-900 dark:text-gray-100">Descargar Informe PDF</h3>
                             <button onClick={() => setShowDepModal(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-x"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-x"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
                             </button>
                         </div>
                         <p className="text-sm text-gray-500 mb-6 font-medium">Por favor selecciona la dependencia para la cual deseas generar el informe.</p>
@@ -1841,13 +1860,13 @@ export default function ReporteriaGeneralClient() {
                                     if (selectedDepForPdf) {
                                         setGlobalDepId(selectedDepForPdf);
                                         setShowDepModal(false);
-                                        setPendingPdfDownload(true);
+                                        downloadPdf(selectedDepForPdf);
                                     }
                                 }}
                                 disabled={!selectedDepForPdf}
-                                className="px-4 py-2 rounded-xl text-xs font-black bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-md uppercase tracking-widest disabled:opacity-50"
+                                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black transition-colors shadow-md uppercase tracking-widest disabled:opacity-50"
                             >
-                                Descargar
+                                Generar Informe
                             </button>
                         </div>
                     </div>
@@ -1869,7 +1888,7 @@ export default function ReporteriaGeneralClient() {
                     <RiskMatrixScatter
                         key={`pdf-deps-${globalDepId}`}
                         title="Matriz de Riesgos por Dependencia"
-                        points={pdfDepsMatrixPoints.filter(p => 
+                        points={pdfDepsMatrixPoints.filter(p =>
                             globalDepId === 'ALL' || globalDepId.split(',').includes(p.id)
                         )}
                     />
