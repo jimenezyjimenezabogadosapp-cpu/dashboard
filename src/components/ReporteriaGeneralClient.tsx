@@ -315,7 +315,7 @@ export default function ReporteriaGeneralClient() {
 
                 // Fetch Individual Risks for modes 2 & 3
                 const indRisksRes = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
-                    SELECT rdt.id, rdt.name, rdt.impact, rdt.probability, rat.dependence_id, rat.type as control_type, rat.description as action_desc
+                    SELECT rdt.id, rdt.name, rdt.description as risk_desc, rdt.impact, rdt.probability, rat.dependence_id, rat.type as control_type, rat.description as action_desc
                     FROM riesgos_judiciales_db.risk_data_tbl rdt
                     INNER JOIN riesgos_judiciales_db.risk_action_tbl rat ON rat.risk_id = rdt.id
                     WHERE rat.dependence_id IS NOT NULL
@@ -893,6 +893,34 @@ export default function ReporteriaGeneralClient() {
                 segImages[`${dim}-2`] = await getChartImage(`chart-seg-2-${dim}`);
             }
 
+            const inherentPoints = individualRisks.filter(r => globalDepId === 'ALL' ? true : globalDepId.split(',').includes(r.dependence_id)).reduce((acc: any[], r) => {
+                const existing = acc.find(a => a.id === r.id);
+                if (existing) return acc;
+                acc.push({ id: r.id.toString(), name: r.name, description: r.risk_desc, x: Math.min(5, Math.max(1, (r.impact / 20) * 5)), y: Math.min(5, Math.max(1, (r.probability / 4) * 5)) });
+                return acc;
+            }, []);
+
+            const residualPoints = individualRisks.filter(r => globalDepId === 'ALL' ? true : globalDepId.split(',').includes(r.dependence_id)).reduce((acc: any[], r) => {
+                const existing = acc.find(a => a.id === r.id);
+                const config = EFFICACY_MAP[r.control_type] || { eff: 0.1, nature: "Preventivo" };
+                if (existing) {
+                    if (config.nature === "Preventivo") (existing as any).maxProbEff = Math.max((existing as any).maxProbEff || 0, config.eff);
+                    else (existing as any).maxImpEff = Math.max((existing as any).maxImpEff || 0, config.eff);
+                    const resImpact = r.impact * (1 - ((existing as any).maxImpEff || 0));
+                    const resProb = r.probability * (1 - ((existing as any).maxProbEff || 0));
+                    existing.x = Math.min(5, Math.max(1, (resImpact / 20) * 5));
+                    existing.y = Math.min(5, Math.max(1, (resProb / 4) * 5));
+                    return acc;
+                }
+                const probEff = config.nature === "Preventivo" ? config.eff : 0;
+                const impEff = config.nature === "Detectivo" ? config.eff : 0;
+                const resImpact = r.impact * (1 - impEff);
+                const resProb = r.probability * (1 - probEff);
+                const p = { id: r.id.toString(), name: r.name, description: r.risk_desc, x: Math.min(5, Math.max(1, (resImpact / 20) * 5)), y: Math.min(5, Math.max(1, (resProb / 4) * 5)), maxProbEff: probEff, maxImpEff: impEff };
+                acc.push(p);
+                return acc;
+            }, []);
+
             const payload = {
                 role: viewRole,
                 filters: {
@@ -902,11 +930,15 @@ export default function ReporteriaGeneralClient() {
                     fechaHasta: dateTo || 'Sin límite',
                     agrupacion: datePeriod === 'total' ? 'Anual' : datePeriod === 'semiannual' ? 'Semestral' : datePeriod === 'quarterly' ? 'Trimestral' : 'Mensual'
                 },
+                riskLegends: {
+                    inherent: inherentPoints,
+                    residual: residualPoints
+                },
                 kpis: data?.kpis || [],
                 images: {
                     riskMatrixInherent: riskMatrixInherentImg,
                     riskMatrixResidual: riskMatrixResidualImg,
-                    bar1: bar1Img,
+                    bar2: bar2Img,
                     pie: pieImg,
                     ...segImages
                 }
@@ -1822,9 +1854,18 @@ export default function ReporteriaGeneralClient() {
                 </div>
             )}
 
+            {/* Overlay de carga al descargar PDF */}
+            {isDownloadingPdf && (
+                <div className="fixed inset-0 bg-white z-[9999] flex flex-col items-center justify-center">
+                    <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                    <h2 className="text-2xl font-black text-gray-800 tracking-tighter uppercase">Generando Informe PDF...</h2>
+                    <p className="text-gray-500 mt-2 text-sm">Preparando gráficas y matrices, por favor espere.</p>
+                </div>
+            )}
+
             {/* Contenedor Oculto para exportación PDF (Todas las matrices) */}
-            <div className="fixed top-0 left-[-9999px] w-[800px] bg-white z-0">
-                <div id="chart-risk-matrix-deps" className="p-8 bg-white">
+            <div className={cn("fixed top-0 left-0 w-[800px] bg-white z-[9998]", !isDownloadingPdf && "hidden")}>
+                <div id="chart-risk-matrix-deps" className="p-8 bg-white" style={{ height: '600px' }}>
                     <RiskMatrixScatter
                         key={`pdf-deps-${globalDepId}`}
                         title="Matriz de Riesgos por Dependencia"
@@ -1833,7 +1874,7 @@ export default function ReporteriaGeneralClient() {
                         )}
                     />
                 </div>
-                <div id="chart-risk-matrix-inherent" className="p-8 bg-white">
+                <div id="chart-risk-matrix-inherent" className="p-8 bg-white" style={{ height: '600px' }}>
                     <RiskMatrixScatter
                         key={`pdf-inherent-${globalDepId}`}
                         title={`Riesgos Inherentes: ${allDependencies.find(d => d.id === globalDepId)?.name || (globalDepId === 'ALL' ? 'Todas' : '')}`}
@@ -1846,7 +1887,7 @@ export default function ReporteriaGeneralClient() {
                         }, [])}
                     />
                 </div>
-                <div id="chart-risk-matrix-residual" className="p-8 bg-white">
+                <div id="chart-risk-matrix-residual" className="p-8 bg-white" style={{ height: '600px' }}>
                     <RiskMatrixScatter
                         key={`pdf-residual-${globalDepId}`}
                         title={`Riesgos Residuales: ${allDependencies.find(d => d.id === globalDepId)?.name || (globalDepId === 'ALL' ? 'Todas' : '')}`}
