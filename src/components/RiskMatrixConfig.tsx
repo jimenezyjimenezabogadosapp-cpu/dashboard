@@ -581,7 +581,7 @@ export default function RiskMatrixConfig() {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        sql: `UPDATE riesgos_judiciales_db.risk_data_tbl SET name = ?, description = ?, impact = ?, probability = ?, residual_impact = ?, residual_probability = ? WHERE id = ?`,
+                        sql: `UPDATE risk_data_tbl SET name = ?, description = ?, impact = ?, probability = ?, residual_impact = ?, residual_probability = ? WHERE id = ?`,
                         params: [riskPayload.name, riskPayload.description, riskPayload.impact, riskPayload.probability, riskPayload.residual_impact, riskPayload.residual_probability, config.id]
                     })
                 });
@@ -591,7 +591,7 @@ export default function RiskMatrixConfig() {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        sql: `DELETE FROM riesgos_judiciales_db.risk_action_tbl WHERE risk_id = ?`,
+                        sql: `DELETE FROM risk_action_tbl WHERE risk_id = ?`,
                         params: [config.id]
                     })
                 });
@@ -601,7 +601,7 @@ export default function RiskMatrixConfig() {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            sql: `INSERT INTO riesgos_judiciales_db.risk_action_tbl (risk_id, description, type, person, dependence_id, status) VALUES (?, ?, ?, ?, ?, ?)`,
+                            sql: `INSERT INTO risk_action_tbl (risk_id, description, type, person, dependence_id, status) VALUES (?, ?, ?, ?, ?, ?)`,
                             params: [
                                 config.id,
                                 mitigation.description || '',
@@ -618,7 +618,7 @@ export default function RiskMatrixConfig() {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        sql: `INSERT INTO riesgos_judiciales_db.risk_data_tbl (name, description, impact, probability, residual_impact, residual_probability, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                        sql: `INSERT INTO risk_data_tbl (name, description, impact, probability, residual_impact, residual_probability, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
                         params: [riskPayload.name, riskPayload.description, riskPayload.impact, riskPayload.probability, riskPayload.residual_impact, riskPayload.residual_probability, riskPayload.status]
                     })
                 });
@@ -631,7 +631,7 @@ export default function RiskMatrixConfig() {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
-                                sql: `INSERT INTO riesgos_judiciales_db.risk_action_tbl (risk_id, description, type, person, dependence_id, status) VALUES (?, ?, ?, ?, ?, ?)`,
+                                sql: `INSERT INTO risk_action_tbl (risk_id, description, type, person, dependence_id, status) VALUES (?, ?, ?, ?, ?, ?)`,
                                 params: [
                                     newId,
                                     mitigation.description || '',

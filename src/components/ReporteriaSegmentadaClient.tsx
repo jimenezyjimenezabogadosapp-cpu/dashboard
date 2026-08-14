@@ -181,8 +181,8 @@ export default function ReporteriaSegmentadaClient() {
                 // Fetch Individual Risks for modes 2 & 3
                 const indRisksRes = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
                     SELECT rdt.id, rdt.name, rdt.impact, rdt.probability, rat.dependence_id, rat.type as control_type, rat.description as action_desc
-                    FROM riesgos_judiciales_db.risk_data_tbl rdt
-                    INNER JOIN riesgos_judiciales_db.risk_action_tbl rat ON rat.risk_id = rdt.id
+                    FROM risk_data_tbl rdt
+                    INNER JOIN risk_action_tbl rat ON rat.risk_id = rdt.id
                     WHERE rat.dependence_id IS NOT NULL
                 `));
                 const indRisksD = await indRisksRes.json();
@@ -209,7 +209,7 @@ export default function ReporteriaSegmentadaClient() {
                     `)),
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
                         SELECT DATE_FORMAT(created, '%Y-%m-%d') AS "Fecha", COUNT(*) AS "Total de registros"
-                        FROM client_tbl ct WHERE ${whereClauseCt} AND created >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
+                        FROM client_tbl ct WHERE ${whereClauseCt} AND created >= DATE_SUB(CURRENT_DATE, INTERVAL 3 MONTH)
                         GROUP BY DATE_FORMAT(created, '%Y-%m-%d') ORDER BY "Fecha" ASC LIMIT 100
                     `)),
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
@@ -222,8 +222,8 @@ export default function ReporteriaSegmentadaClient() {
                         SELECT dt.id, dt.name, COALESCE(AVG(rdt.impact), 1) as x_impact,
                         COALESCE((SELECT COUNT(a.id) FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id WHERE c.dependence_id = dt.id) * 5.0 / 
                         NULLIF((SELECT COUNT(c.id) FROM client_tbl c WHERE c.dependence_id = dt.id), 0), 1) as y_prob
-                        FROM dependence_tbl dt LEFT JOIN riesgos_judiciales_db.risk_action_tbl rat ON rat.dependence_id = dt.id
-                        LEFT JOIN riesgos_judiciales_db.risk_data_tbl rdt ON rdt.id = rat.risk_id
+                        FROM dependence_tbl dt LEFT JOIN risk_action_tbl rat ON rat.dependence_id = dt.id
+                        LEFT JOIN risk_data_tbl rdt ON rdt.id = rat.risk_id
                         WHERE ${matrixFilter} GROUP BY dt.id, dt.name
                     `)),
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
@@ -231,14 +231,14 @@ export default function ReporteriaSegmentadaClient() {
                         CASE MAX(a.\`level\`) WHEN 1 THEN 'Crítico' WHEN 2 THEN 'Alto' WHEN 3 THEN 'Medio' WHEN 4 THEN 'Sin Riesgo' ELSE 'No definido' END as alert_description,
                         CEILING(AVG(rdt.impact)) as avg_impact, CEILING(AVG(rdt.probability)) as avg_probability,
                         COUNT(DISTINCT rdt.id) as risk_count, AVG(rdt.impact * rdt.probability) as risk_score
-                        FROM riesgos_judiciales_db.risk_action_tbl rat INNER JOIN riesgos_judiciales_db.risk_data_tbl rdt ON rat.risk_id = rdt.id
+                        FROM risk_action_tbl rat INNER JOIN risk_data_tbl rdt ON rat.risk_id = rdt.id
                         LEFT JOIN client_tbl ct ON ct.dependence_id = rat.dependence_id LEFT JOIN alert_tbl a ON a.client_id = ct.id LEFT JOIN dependence_tbl dt ON dt.id = rat.dependence_id
                         WHERE rat.dependence_id IS NOT NULL AND ${auth.isSuper && !matrixDepId ? '1=1' : (targetDepId ? (targetDepId.split(',').length > 1 ? `rat.dependence_id IN (${targetDepId.split(',').map(id => `'${id}'`).join(',')})` : `rat.dependence_id = '${targetDepId}'`) : '1=0')}
                         GROUP BY dt.name, rat.dependence_id ORDER BY risk_score DESC
                     `)),
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
                         SELECT rdt.name as "Riesgo", rdt.description as "Descripcion", rdt.status as "Estado", rat.description as "Accion"
-                        FROM riesgos_judiciales_db.risk_data_tbl rdt inner join riesgos_judiciales_db.risk_action_tbl rat on rat.risk_id = rdt.id
+                        FROM risk_data_tbl rdt inner join risk_action_tbl rat on rat.risk_id = rdt.id
                         WHERE ${auth.isSuper ? '1=1' : (auth.dependenceId ? (auth.dependenceId.split(',').length > 1 ? `rat.dependence_id IN (${auth.dependenceId.split(',').map(id => `'${id}'`).join(',')})` : `rat.dependence_id = '${auth.dependenceId}'`) : '1=0')}
                     `)),
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`

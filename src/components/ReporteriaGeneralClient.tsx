@@ -237,10 +237,10 @@ export default function ReporteriaGeneralClient() {
 
                 const getTimeSelect = (col: string) => {
                     switch (datePeriod) {
-                        case "monthly": return `DATE_FORMAT(${col}, '%Y-%m')`;
+                        case "monthly": return `TO_CHAR(${col}, 'YYYY-MM')`;
                         case "quarterly": return `CONCAT(YEAR(${col}), '-Q', QUARTER(${col}))`;
                         case "semiannual": return `CONCAT(YEAR(${col}), '-S', CEILING(MONTH(${col})/6))`;
-                        default: return `DATE_FORMAT(${col}, '%Y')`;
+                        default: return `TO_CHAR(${col}, 'YYYY')`;
                     }
                 };
                 const timeExpr = getTimeSelect('c.created');
@@ -316,8 +316,8 @@ export default function ReporteriaGeneralClient() {
                 // Fetch Individual Risks for modes 2 & 3
                 const indRisksRes = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
                     SELECT rdt.id, rdt.name, rdt.description as risk_desc, rdt.impact, rdt.probability, rat.dependence_id, rat.type as control_type, rat.description as action_desc
-                    FROM riesgos_judiciales_db.risk_data_tbl rdt
-                    INNER JOIN riesgos_judiciales_db.risk_action_tbl rat ON rat.risk_id = rdt.id
+                    FROM risk_data_tbl rdt
+                    INNER JOIN risk_action_tbl rat ON rat.risk_id = rdt.id
                     WHERE rat.dependence_id IS NOT NULL
                 `));
                 const indRisksD = await indRisksRes.json();
@@ -344,13 +344,13 @@ export default function ReporteriaGeneralClient() {
                         SELECT 
                             99.9 as uptime,
                             ROUND((SELECT AVG(execute_time) FROM stadistics_usage_tbl), 0) as avg_response,
-                            ROUND((SELECT COUNT(*) FROM client_tbl WHERE created >= CURDATE()), 0) as today_requests,
+                            ROUND((SELECT COUNT(*) FROM client_tbl WHERE created >= CURRENT_DATE), 0) as today_requests,
                             0.5 as error_rate,
-                            ROUND((SELECT COUNT(*) FROM client_tbl WHERE client_type != 'Natural' AND created >= DATE_FORMAT(CURDATE(), '%Y-%m-01')) * 0.45, 2) as api_costs
+                            ROUND((SELECT COUNT(*) FROM client_tbl WHERE client_type != 'Natural' AND created >= date_trunc('month', CURRENT_DATE)) * 0.45, 2) as api_costs
                     `;
                     bar1Query = `SELECT 'Dilisense' as label, 45 as value UNION ALL SELECT 'Paco' as label, 30 as value UNION ALL SELECT 'Cruce Judicial' as label, 25 as value`;
                     bar2Query = `SELECT 'Módulo Auth' as label, 120 as value UNION ALL SELECT 'Módulo PDF' as label, 450 as value UNION ALL SELECT 'Módulo Buscador' as label, 280 as value`; // Latencia
-                    lineQuery = `SELECT DATE_FORMAT(created, '%H:00') as label, ROUND(COUNT(*), 0) as value FROM client_tbl WHERE created >= CURDATE() GROUP BY label ORDER BY label ASC`;
+                    lineQuery = `SELECT TO_CHAR(created, 'HH24:00') as label, ROUND(COUNT(*), 0) as value FROM client_tbl WHERE created >= CURRENT_DATE GROUP BY label ORDER BY label ASC`;
                     pieQuery = `SELECT 'Exitosas' as label, 98 as value UNION ALL SELECT 'Fallidas' as label, 2 as value`;
                 } else if (viewRole === "SUPER" || viewRole === "ADMIN") {
                     // PERSPECTIVA SUPER (GENERAL) O ADMIN (DEPENDENCIA)
@@ -361,7 +361,7 @@ export default function ReporteriaGeneralClient() {
                             SELECT 
                                 ROUND((SELECT COUNT(*) FROM client_tbl WHERE users_id = '${targetUserId}'), 0) as casos_procesados,
                                 ROUND((SELECT COUNT(*) FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id WHERE c.users_id = '${targetUserId}' AND a.level = '1'), 0) as alertas_criticas_mias,
-                                ROUND((SELECT COUNT(*) FROM client_tbl WHERE users_id = '${targetUserId}' AND created >= CURDATE()), 0) as productividad_hoy,
+                                ROUND((SELECT COUNT(*) FROM client_tbl WHERE users_id = '${targetUserId}' AND created >= CURRENT_DATE), 0) as productividad_hoy,
                                 ROUND(COALESCE((SELECT COUNT(*) FROM training_progress_tbl WHERE userId = '${targetUserId}') * 100 / NULLIF((SELECT COUNT(*) FROM training_tbl WHERE status = 1), 0), 0), 0) as progreso_entrenamiento
                         `;
                     } else {
@@ -462,7 +462,7 @@ export default function ReporteriaGeneralClient() {
                         SELECT 
                             ROUND((SELECT COUNT(*) FROM client_tbl c WHERE ${whereClauseC}), 0) as casos_procesados,
                             ROUND((SELECT COUNT(*) FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id WHERE a.level = '1' AND ${whereClauseC}), 0) as alertas_criticas_mias,
-                            ROUND((SELECT COUNT(*) FROM client_tbl c WHERE ${whereClauseC} AND c.created >= CURDATE()), 0) as productividad_hoy,
+                            ROUND((SELECT COUNT(*) FROM client_tbl c WHERE ${whereClauseC} AND c.created >= CURRENT_DATE), 0) as productividad_hoy,
                             ROUND(COALESCE((SELECT COUNT(*) FROM training_progress_tbl WHERE userId = '${uId}') * 100 / NULLIF((SELECT COUNT(*) FROM training_tbl WHERE status = 1), 0), 0), 0) as progreso_entrenamiento
                     `;
                     bar1Query = `
@@ -566,22 +566,22 @@ export default function ReporteriaGeneralClient() {
                         SELECT dt.id, dt.name, COALESCE(AVG(rdt.impact), 1) as x_impact,
                         COALESCE((SELECT COUNT(a.id) FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id WHERE c.dependence_id = dt.id) * 5.0 / 
                         NULLIF((SELECT COUNT(c.id) FROM client_tbl c WHERE c.dependence_id = dt.id), 0), 1) as y_prob
-                        FROM dependence_tbl dt LEFT JOIN riesgos_judiciales_db.risk_action_tbl rat ON rat.dependence_id = dt.id
-                        LEFT JOIN riesgos_judiciales_db.risk_data_tbl rdt ON rdt.id = rat.risk_id
+                        FROM dependence_tbl dt LEFT JOIN risk_action_tbl rat ON rat.dependence_id = dt.id
+                        LEFT JOIN risk_data_tbl rdt ON rdt.id = rat.risk_id
                         WHERE ${matrixFilter} GROUP BY dt.id, dt.name
                     `;
                 } else if (matrixMode === "inherent") {
                     matrixQuery = `
                         SELECT rdt.id, rdt.name, rdt.impact as x_impact, rdt.probability as y_prob
-                        FROM riesgos_judiciales_db.risk_data_tbl rdt
-                        INNER JOIN riesgos_judiciales_db.risk_action_tbl rat ON rat.risk_id = rdt.id
+                        FROM risk_data_tbl rdt
+                        INNER JOIN risk_action_tbl rat ON rat.risk_id = rdt.id
                         WHERE ${auth.isSuper ? '1=1' : `rat.dependence_id = '${auth.dependenceId}'`}
                     `;
                 } else {
                     matrixQuery = `
                         SELECT rdt.id, rdt.name, COALESCE(rdt.residual_impact, 1) as x_impact, COALESCE(rdt.residual_probability, 1) as y_prob
-                        FROM riesgos_judiciales_db.risk_data_tbl rdt
-                        INNER JOIN riesgos_judiciales_db.risk_action_tbl rat ON rat.risk_id = rdt.id
+                        FROM risk_data_tbl rdt
+                        INNER JOIN risk_action_tbl rat ON rat.risk_id = rdt.id
                         WHERE ${auth.isSuper ? '1=1' : `rat.dependence_id = '${auth.dependenceId}'`}
                     `;
                 }
@@ -599,8 +599,8 @@ export default function ReporteriaGeneralClient() {
                         COALESCE(CEILING(AVG(rdt.impact)), 1) as avg_impact, COALESCE(CEILING(AVG(rdt.probability)), 1) as avg_probability,
                         COUNT(DISTINCT rdt.id) as risk_count, COALESCE(AVG(rdt.impact * rdt.probability), 0) as risk_score
                         FROM dependence_tbl dt
-                        LEFT JOIN riesgos_judiciales_db.risk_action_tbl rat ON rat.dependence_id = dt.id
-                        LEFT JOIN riesgos_judiciales_db.risk_data_tbl rdt ON rdt.id = rat.risk_id
+                        LEFT JOIN risk_action_tbl rat ON rat.dependence_id = dt.id
+                        LEFT JOIN risk_data_tbl rdt ON rdt.id = rat.risk_id
                         LEFT JOIN client_tbl ct ON ct.dependence_id = dt.id
                         LEFT JOIN alert_tbl a ON a.client_id = ct.id
                         WHERE ${(viewRole === 'SUPER' && !depId) ? '1=1' : `dt.id = '${depId || auth.dependenceId}'`}
@@ -608,7 +608,7 @@ export default function ReporteriaGeneralClient() {
                     `)),
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
                         SELECT rdt.name as "Riesgo", rdt.description as "Descripcion", rdt.status as "Estado", rat.description as "Accion"
-                        FROM riesgos_judiciales_db.risk_data_tbl rdt inner join riesgos_judiciales_db.risk_action_tbl rat on rat.risk_id = rdt.id
+                        FROM risk_data_tbl rdt inner join risk_action_tbl rat on rat.risk_id = rdt.id
                         WHERE ${auth.isSuper ? '1=1' : `rat.dependence_id = '${auth.dependenceId}'`}
                     `)),
                     fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
@@ -626,8 +626,8 @@ export default function ReporteriaGeneralClient() {
                         SELECT dt.id, dt.name, COALESCE(AVG(rdt.impact), 1) as x_impact,
                         COALESCE((SELECT COUNT(a.id) FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id WHERE c.dependence_id = dt.id) * 5.0 / 
                         NULLIF((SELECT COUNT(c.id) FROM client_tbl c WHERE c.dependence_id = dt.id), 0), 1) as y_prob
-                        FROM dependence_tbl dt LEFT JOIN riesgos_judiciales_db.risk_action_tbl rat ON rat.dependence_id = dt.id
-                        LEFT JOIN riesgos_judiciales_db.risk_data_tbl rdt ON rdt.id = rat.risk_id
+                        FROM dependence_tbl dt LEFT JOIN risk_action_tbl rat ON rat.dependence_id = dt.id
+                        LEFT JOIN risk_data_tbl rdt ON rdt.id = rat.risk_id
                         WHERE ${(viewRole === 'SUPER') ? '1=1' : `dt.id = '${globalDepId || auth.dependenceId}'`}
                         GROUP BY dt.id, dt.name
                     `))
