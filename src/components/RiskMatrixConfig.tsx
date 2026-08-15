@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "./theme-toggle";
+import { fetchSql } from "@/lib/fetch-sql";
 import {
     ChevronRight,
     ChevronLeft,
@@ -347,13 +348,13 @@ export default function RiskMatrixConfig() {
 
     const loadRisks = async (depId: string, isSuper: boolean) => {
         try {
-            let query = "SELECT rdt.*, ANY_VALUE(dt.name) as dependence_name FROM risk_data_tbl rdt LEFT JOIN risk_action_tbl rat ON rat.risk_id = rdt.id LEFT JOIN dependence_tbl dt ON dt.id = rat.dependence_id";
+            let query = "SELECT rdt.*, MAX(dt.name) as dependence_name FROM risk_data_tbl rdt LEFT JOIN risk_action_tbl rat ON rat.risk_id = rdt.id LEFT JOIN dependence_tbl dt ON dt.id = rat.dependence_id";
             if (!isSuper && depId) {
                 query += ` WHERE rat.dependence_id = '${depId}'`;
             }
             query += " GROUP BY rdt.id ORDER BY rdt.created DESC";
 
-            const resRisks = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(query));
+            const resRisks = await fetchSql(userKey, query);
             const dataRisks = await resRisks.json();
             setRisksList(Array.isArray(dataRisks) ? dataRisks : []);
         } catch (err) {
@@ -372,7 +373,7 @@ export default function RiskMatrixConfig() {
         async function init() {
             setLoading(true);
             try {
-                const resDeps = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent("SELECT id, name FROM dependence_tbl ORDER BY name ASC"));
+                const resDeps = await fetchSql(userKey, "SELECT id, name FROM dependence_tbl ORDER BY name ASC");
                 const dataDeps = await resDeps.json();
                 setDependencies(Array.isArray(dataDeps) ? dataDeps : []);
                 await loadRisks(depId, isSuper);
@@ -487,7 +488,7 @@ export default function RiskMatrixConfig() {
         setLoading(true);
         try {
             const query = `SELECT * FROM risk_action_tbl WHERE risk_id = ${risk.id}`;
-            const res = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(query));
+            const res = await fetchSql(userKey, query);
             const actions = await res.json();
 
             const mitigations: Mitigation[] = Array.isArray(actions) ? actions.map(a => {
@@ -548,7 +549,7 @@ export default function RiskMatrixConfig() {
         setLoading(true);
         try {
             const query = `SELECT * FROM risk_action_tbl WHERE risk_id = ${risk.id}`;
-            const res = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(query));
+            const res = await fetchSql(userKey, query);
             const actions = await res.json();
             
             setViewingRisk(risk);
@@ -618,12 +619,12 @@ export default function RiskMatrixConfig() {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        sql: `INSERT INTO risk_data_tbl (name, description, impact, probability, residual_impact, residual_probability, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                        sql: `INSERT INTO risk_data_tbl (name, description, impact, probability, residual_impact, residual_probability, status) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
                         params: [riskPayload.name, riskPayload.description, riskPayload.impact, riskPayload.probability, riskPayload.residual_impact, riskPayload.residual_probability, riskPayload.status]
                     })
                 });
                 const data = await res.json();
-                const newId = data.data.insertId;
+                const newId = data.data?.[0]?.id;
 
                 if (newId) {
                     for (const mitigation of config.mitigations) {

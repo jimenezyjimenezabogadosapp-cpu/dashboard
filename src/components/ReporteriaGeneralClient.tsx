@@ -14,6 +14,7 @@ import RiskMatrixScatter from "./dashboard/RiskMatrixScatter";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "./theme-toggle";
 import * as htmlToImage from "html-to-image";
+import { fetchSql } from "@/lib/fetch-sql";
 
 const dimensionExprMap: Record<string, { label: string; expr: string; filter: string }> = {
     "client_type": {
@@ -34,7 +35,7 @@ const dimensionExprMap: Record<string, { label: string; expr: string; filter: st
     "product": {
         label: "Producto",
         expr: "TRIM(c.product)",
-        filter: "AND c.product IS NOT NULL AND TRIM(c.product) != '' AND c.product NOT REGEXP '^[0-9][0-9]-'"
+        filter: "AND c.product IS NOT NULL AND TRIM(c.product) != '' AND c.product !~ '^[0-9][0-9]-'"
     },
     "complex_jurisdictions": {
         label: "Jurisdicción",
@@ -238,8 +239,8 @@ export default function ReporteriaGeneralClient() {
                 const getTimeSelect = (col: string) => {
                     switch (datePeriod) {
                         case "monthly": return `TO_CHAR(${col}, 'YYYY-MM')`;
-                        case "quarterly": return `CONCAT(YEAR(${col}), '-Q', QUARTER(${col}))`;
-                        case "semiannual": return `CONCAT(YEAR(${col}), '-S', CEILING(MONTH(${col})/6))`;
+                        case "quarterly": return `CONCAT(EXTRACT(YEAR FROM ${col}), '-Q', EXTRACT(QUARTER FROM ${col}))`;
+                        case "semiannual": return `CONCAT(EXTRACT(YEAR FROM ${col}), '-S', CEILING(EXTRACT(MONTH FROM ${col})/6))`;
                         default: return `TO_CHAR(${col}, 'YYYY')`;
                     }
                 };
@@ -256,7 +257,7 @@ export default function ReporteriaGeneralClient() {
                 }
 
                 // Fetch dependencies for dropdown
-                const depsRes = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`SELECT id, name FROM dependence_tbl ORDER BY name ASC`));
+                const depsRes = await fetchSql(userKey, `SELECT id, name FROM dependence_tbl ORDER BY name ASC`);
                 const depsD = await depsRes.json();
 
                 let processedDeps = [];
@@ -286,12 +287,12 @@ export default function ReporteriaGeneralClient() {
                         ? `c.dependence_id IN (${depIds.map(id => `'${id}'`).join(',')})`
                         : `c.dependence_id = '${currentDepId}'`;
 
-                    const usersRes = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
-                        SELECT DISTINCT c.users_id as user_id, u.email 
+                    const usersRes = await fetchSql(userKey, `
+                        SELECT DISTINCT c.users_id as user_id, u.email
                         FROM client_tbl c
                         INNER JOIN users_app_tbl u ON c.users_id = u.id
                         WHERE ${condition} AND c.users_id IS NOT NULL
-                    `));
+                    `, currentDepId);
                     const usersD = await usersRes.json();
                     setDependenceUsers(Array.isArray(usersD) ? usersD : []);
                 }
@@ -314,12 +315,12 @@ export default function ReporteriaGeneralClient() {
                 }
 
                 // Fetch Individual Risks for modes 2 & 3
-                const indRisksRes = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
+                const indRisksRes = await fetchSql(userKey, `
                     SELECT rdt.id, rdt.name, rdt.description as risk_desc, rdt.impact, rdt.probability, rat.dependence_id, rat.type as control_type, rat.description as action_desc
                     FROM risk_data_tbl rdt
                     INNER JOIN risk_action_tbl rat ON rat.risk_id = rdt.id
                     WHERE rat.dependence_id IS NOT NULL
-                `));
+                `);
                 const indRisksD = await indRisksRes.json();
                 setIndividualRisks(Array.isArray(indRisksD) ? indRisksD : []);
 
@@ -337,6 +338,8 @@ export default function ReporteriaGeneralClient() {
                 const depIds = depId ? depId.split(',') : [];
                 const depFilter = depIds.length > 1 ? `WHERE c.dependence_id IN (${depIds.map(id => `'${id}'`).join(',')})` : (depId ? `WHERE c.dependence_id = '${depId}'` : "");
                 const depFilterJoin = depIds.length > 1 ? `AND c.dependence_id IN (${depIds.map(id => `'${id}'`).join(',')})` : (depId ? `AND c.dependence_id = '${depId}'` : "");
+                // Schema(s) de Postgres a los que apuntar: vacio = todos los tenants (SUPER sin filtro)
+                const depIdParam = depId || undefined;
 
                 if (viewRole === "SUPER" && globalDepId === "SYS_ADMIN") {
                     // PERSPECTIVA SUPER - ADMINISTRADOR DE SISTEMAS (SALUD TÉCNICA)
@@ -375,7 +378,7 @@ export default function ReporteriaGeneralClient() {
                     }
                     bar1Query = `
                         SELECT 
-                            COALESCE(SUBSTRING_INDEX(u.email, '@', 1), c.users_id, 'Anónimo') as label, 
+                            COALESCE(SPLIT_PART(u.email, '@', 1), c.users_id, 'Anónimo') as label,
                             ROUND(${countExpr}, 0) as value 
                         FROM client_tbl c 
                         LEFT JOIN users_app_tbl u ON c.users_id = u.id 
@@ -524,7 +527,7 @@ export default function ReporteriaGeneralClient() {
                     "product": {
                         // Filtrar datos viejos con formato de nivel (00-Bajo, 01-Medio bajo, etc.)
                         expr: "TRIM(c.product)",
-                        filter: "AND c.product IS NOT NULL AND TRIM(c.product) != '' AND c.product NOT REGEXP '^[0-9][0-9]-'"
+                        filter: "AND c.product IS NOT NULL AND TRIM(c.product) != '' AND c.product !~ '^[0-9][0-9]-'"
                     },
                     "complex_jurisdictions": {
                         // Jurisdicción = País + Ciudad. city_id guarda el nombre de la ciudad
@@ -585,17 +588,19 @@ export default function ReporteriaGeneralClient() {
                         WHERE ${auth.isSuper ? '1=1' : `rat.dependence_id = '${auth.dependenceId}'`}
                     `;
                 }
+                // Solo el modo "deps" toca client_tbl/alert_tbl; los otros son 100% "core".
+                const matrixDepIdParam = matrixMode === "deps" && viewRole !== "SUPER" ? currentDepId : undefined;
 
                 const [kpiRes, bar1Res, bar2Res, lineRes, pieRes, matrixRes, tableRes, detailsRes, trainingRes, pdfDepsRes] = await Promise.all([
-                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(kpiQuery)),
-                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(bar1Query)),
-                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(bar2Query)),
-                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(lineQuery)),
-                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(pieQuery)),
-                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(matrixQuery)),
-                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
-                        SELECT dt.name as dependence_name, COALESCE(MAX(a.\`level\`), 4) as alert_level,
-                        CASE COALESCE(MAX(a.\`level\`), 4) WHEN 1 THEN 'Crítico' WHEN 2 THEN 'Alto' WHEN 3 THEN 'Medio' WHEN 4 THEN 'Sin Riesgo' ELSE 'Sin Riesgo' END as alert_description,
+                    fetchSql(userKey, kpiQuery, depIdParam),
+                    fetchSql(userKey, bar1Query, depIdParam),
+                    fetchSql(userKey, bar2Query, depIdParam),
+                    fetchSql(userKey, lineQuery, depIdParam),
+                    fetchSql(userKey, pieQuery, depIdParam),
+                    fetchSql(userKey, matrixQuery, matrixDepIdParam),
+                    fetchSql(userKey, `
+                        SELECT dt.name as dependence_name, COALESCE(MAX(a.level), 4) as alert_level,
+                        CASE COALESCE(MAX(a.level), 4) WHEN 1 THEN 'Crítico' WHEN 2 THEN 'Alto' WHEN 3 THEN 'Medio' WHEN 4 THEN 'Sin Riesgo' ELSE 'Sin Riesgo' END as alert_description,
                         COALESCE(CEILING(AVG(rdt.impact)), 1) as avg_impact, COALESCE(CEILING(AVG(rdt.probability)), 1) as avg_probability,
                         COUNT(DISTINCT rdt.id) as risk_count, COALESCE(AVG(rdt.impact * rdt.probability), 0) as risk_score
                         FROM dependence_tbl dt
@@ -605,32 +610,32 @@ export default function ReporteriaGeneralClient() {
                         LEFT JOIN alert_tbl a ON a.client_id = ct.id
                         WHERE ${(viewRole === 'SUPER' && !depId) ? '1=1' : `dt.id = '${depId || auth.dependenceId}'`}
                         GROUP BY dt.name, dt.id ORDER BY risk_score DESC
-                    `)),
-                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
+                    `, depIdParam),
+                    fetchSql(userKey, `
                         SELECT rdt.name as "Riesgo", rdt.description as "Descripcion", rdt.status as "Estado", rat.description as "Accion"
                         FROM risk_data_tbl rdt inner join risk_action_tbl rat on rat.risk_id = rdt.id
                         WHERE ${auth.isSuper ? '1=1' : `rat.dependence_id = '${auth.dependenceId}'`}
-                    `)),
-                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
+                    `),
+                    fetchSql(userKey, `
                         SELECT u.email as "Correo", u.name as "Nombre", u.area as "Area",
                         (SELECT COUNT(*) FROM training_progress_tbl tp WHERE tp.userId = u.id) as "Completados",
                         (SELECT COUNT(*) FROM training_tbl t WHERE t.status = 1) as "Total",
                         COALESCE((SELECT AVG(tp.score) FROM training_progress_tbl tp WHERE tp.userId = u.id), 0) as "Puntaje Promedio"
                         FROM users_app_tbl u
-                        WHERE 
-                        ${(viewRole === 'SUPER' || (viewRole === 'TRAINER' && searchParams.get("can_see_all") === "true")) ? 'u.role = "STUDENT"' :
-                            (viewRole === 'ADMIN' || viewRole === 'TRAINER') ? `u.dependence_id = '${globalDepId || auth.dependenceId}' AND u.role = "STUDENT"` :
+                        WHERE
+                        ${(viewRole === 'SUPER' || (viewRole === 'TRAINER' && searchParams.get("can_see_all") === "true")) ? `u.role = 'STUDENT'` :
+                            (viewRole === 'ADMIN' || viewRole === 'TRAINER') ? `u.dependence_id = '${globalDepId || auth.dependenceId}' AND u.role = 'STUDENT'` :
                                 `u.id = '${globalUserId || auth.userId}'`}
-                    `)),
-                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
+                    `),
+                    fetchSql(userKey, `
                         SELECT dt.id, dt.name, COALESCE(AVG(rdt.impact), 1) as x_impact,
-                        COALESCE((SELECT COUNT(a.id) FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id WHERE c.dependence_id = dt.id) * 5.0 / 
+                        COALESCE((SELECT COUNT(a.id) FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id WHERE c.dependence_id = dt.id) * 5.0 /
                         NULLIF((SELECT COUNT(c.id) FROM client_tbl c WHERE c.dependence_id = dt.id), 0), 1) as y_prob
                         FROM dependence_tbl dt LEFT JOIN risk_action_tbl rat ON rat.dependence_id = dt.id
                         LEFT JOIN risk_data_tbl rdt ON rdt.id = rat.risk_id
                         WHERE ${(viewRole === 'SUPER') ? '1=1' : `dt.id = '${globalDepId || auth.dependenceId}'`}
                         GROUP BY dt.id, dt.name
-                    `))
+                    `, viewRole === 'SUPER' ? undefined : (globalDepId || auth.dependenceId))
                 ]);
 
                 const [kpiD, bar1D, bar2D, lineD, pieD, matrixD, tableD, detailsD, trainingD, pdfDepsD] = await Promise.all([
@@ -792,6 +797,7 @@ export default function ReporteriaGeneralClient() {
         const depIds = depId ? depId.split(',') : [];
         const depFilter = depIds.length > 1 ? `WHERE c.dependence_id IN (${depIds.map(id => `'${id}'`).join(',')})` : (depId ? `WHERE c.dependence_id = '${depId}'` : "");
         const depFilterJoin = depIds.length > 1 ? `AND c.dependence_id IN (${depIds.map(id => `'${id}'`).join(',')})` : (depId ? `AND c.dependence_id = '${depId}'` : "");
+        const depIdParam = depId || undefined;
         const countExpr = viewType === "consultas" ? "COUNT(*)" : "COUNT(DISTINCT c.id_number)";
 
 
@@ -819,8 +825,8 @@ export default function ReporteriaGeneralClient() {
             const alertByDimensionQuery = `SELECT ${dimExpr} as label, CASE WHEN a.level IN ('1', '2') THEN 'Alto' WHEN a.level = '3' THEN 'Medio' ELSE 'Bajo' END as alert_level, COUNT(*) as value FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id ${joinClause} ${alertDepFilter} ${dimFilter} ${segDateFilter} GROUP BY label, alert_level ORDER BY value DESC LIMIT 60`;
 
             return [
-                fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(segQuery)).then(r => r.json()).then(d => ({ dim, type: 'seg', data: d })),
-                fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(alertByDimensionQuery)).then(r => r.json()).then(d => ({ dim, type: 'alert', data: d }))
+                fetchSql(userKey, segQuery, depIdParam).then(r => r.json()).then(d => ({ dim, type: 'seg', data: d })),
+                fetchSql(userKey, alertByDimensionQuery, depIdParam).then(r => r.json()).then(d => ({ dim, type: 'alert', data: d }))
             ];
         });
 
@@ -882,7 +888,7 @@ export default function ReporteriaGeneralClient() {
                     ROUND((SELECT COUNT(DISTINCT users_id) FROM client_tbl WHERE ${depFilterPdf}), 0) as analistas_activos,
                     ROUND((SELECT AVG(execution_time) FROM client_tbl WHERE ${depFilterPdf}), 1) as tiempo_promedio_caso
             `;
-            const kpisRes = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(realKpisQuery));
+            const kpisRes = await fetchSql(userKey, realKpisQuery, depIdForPdf || undefined);
             const kpisD = await kpisRes.json();
             
             const realKpis = [

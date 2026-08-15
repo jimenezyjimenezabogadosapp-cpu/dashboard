@@ -13,6 +13,7 @@ import TableGeneric from "./dashboard/TableGeneric";
 import RiskMatrixScatter from "./dashboard/RiskMatrixScatter";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "./theme-toggle";
+import { fetchSql } from "@/lib/fetch-sql";
 
 interface KpiData {
     label: string;
@@ -137,7 +138,9 @@ export default function ReporteriaSegmentadaClient() {
 
                 const whereClause = getWhereClause();
                 const whereClauseCt = getWhereClause("ct");
-                
+                // Schema de Postgres a apuntar: vacio = todos los tenants (SUPER sin filtro)
+                const depIdParam = (auth.isSuper && !matrixDepId) ? undefined : targetDepId;
+
                 let matrixFilter = '1=1';
                 if (!(auth.isSuper && !matrixDepId) && targetDepId) {
                     const depIds = targetDepId.split(',');
@@ -147,7 +150,7 @@ export default function ReporteriaSegmentadaClient() {
                 }
 
                 // Fetch dependencies for dropdown
-                const depsRes = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`SELECT id, name FROM dependence_tbl ORDER BY name ASC`));
+                const depsRes = await fetchSql(userKey, `SELECT id, name FROM dependence_tbl ORDER BY name ASC`);
                 const depsD = await depsRes.json();
                 
                 let processedDeps = [];
@@ -179,79 +182,79 @@ export default function ReporteriaSegmentadaClient() {
                 }
 
                 // Fetch Individual Risks for modes 2 & 3
-                const indRisksRes = await fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
+                const indRisksRes = await fetchSql(userKey, `
                     SELECT rdt.id, rdt.name, rdt.impact, rdt.probability, rat.dependence_id, rat.type as control_type, rat.description as action_desc
                     FROM risk_data_tbl rdt
                     INNER JOIN risk_action_tbl rat ON rat.risk_id = rdt.id
                     WHERE rat.dependence_id IS NOT NULL
-                `));
+                `);
                 const indRisksD = await indRisksRes.json();
                 setIndividualRisks(Array.isArray(indRisksD) ? indRisksD : []);
 
                 // Fetching de todo el dashboard segmentado
                 const [kpiRes, bar1Res, bar2Res, lineRes, pieRes, matrixRes, tableRes, detailsRes, trainingRes] = await Promise.all([
-                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
-                        SELECT 
+                    fetchSql(userKey, `
+                        SELECT
                             (SELECT COUNT(*) FROM client_tbl WHERE ${whereClause}) as busquedas_realizadas,
                             (SELECT COUNT(*) FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id WHERE ${getWhereClause("c")}) as total_alertas,
                             (SELECT COUNT(DISTINCT client_id) FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id WHERE ${getWhereClause("c")}) as clientes_con_alertas,
                             (SELECT AVG(execute_time) FROM stadistics_usage_tbl WHERE 1=1) as tiempo_promedio_caso
-                    `)),
-                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
-                        SELECT 
+                    `, depIdParam),
+                    fetchSql(userKey, `
+                        SELECT
                             (SELECT COUNT(*) FROM client_tbl WHERE ${whereClause}) as "Total clientes",
                             (SELECT COUNT(DISTINCT client_id) FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id WHERE ${getWhereClause("c")}) as "Total clientes con alertas"
-                    `)),
-                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
+                    `, depIdParam),
+                    fetchSql(userKey, `
                         SELECT dt.name as "Dependencia", COUNT(*) as "Total casos"
-                        FROM client_tbl ct INNER JOIN dependence_tbl dt ON dt.id = ct.dependence_id 
+                        FROM client_tbl ct INNER JOIN dependence_tbl dt ON dt.id = ct.dependence_id
                         WHERE ${whereClauseCt} GROUP BY ct.dependence_id ORDER BY COUNT(*) DESC
-                    `)),
-                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
-                        SELECT DATE_FORMAT(created, '%Y-%m-%d') AS "Fecha", COUNT(*) AS "Total de registros"
-                        FROM client_tbl ct WHERE ${whereClauseCt} AND created >= DATE_SUB(CURRENT_DATE, INTERVAL 3 MONTH)
-                        GROUP BY DATE_FORMAT(created, '%Y-%m-%d') ORDER BY "Fecha" ASC LIMIT 100
-                    `)),
-                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
+                    `, depIdParam),
+                    fetchSql(userKey, `
+                        SELECT TO_CHAR(created, 'YYYY-MM-DD') AS "Fecha", COUNT(*) AS "Total de registros"
+                        FROM client_tbl ct WHERE ${whereClauseCt} AND created >= CURRENT_DATE - INTERVAL '3 months'
+                        GROUP BY TO_CHAR(created, 'YYYY-MM-DD') ORDER BY "Fecha" ASC LIMIT 100
+                    `, depIdParam),
+                    fetchSql(userKey, `
                         SELECT t.type AS "Alerta registrada", COUNT(*) AS "Cantidad"
-                        FROM alert_tbl t INNER JOIN client_tbl ct ON ct.id = t.client_id 
-                        INNER JOIN dependence_tbl dt ON dt.id = ct.dependence_id 
+                        FROM alert_tbl t INNER JOIN client_tbl ct ON ct.id = t.client_id
+                        INNER JOIN dependence_tbl dt ON dt.id = ct.dependence_id
                         WHERE ${whereClauseCt} GROUP BY t.type ORDER BY "Cantidad" DESC LIMIT 10
-                    `)),
-                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
+                    `, depIdParam),
+                    fetchSql(userKey, `
                         SELECT dt.id, dt.name, COALESCE(AVG(rdt.impact), 1) as x_impact,
-                        COALESCE((SELECT COUNT(a.id) FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id WHERE c.dependence_id = dt.id) * 5.0 / 
+                        COALESCE((SELECT COUNT(a.id) FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id WHERE c.dependence_id = dt.id) * 5.0 /
                         NULLIF((SELECT COUNT(c.id) FROM client_tbl c WHERE c.dependence_id = dt.id), 0), 1) as y_prob
                         FROM dependence_tbl dt LEFT JOIN risk_action_tbl rat ON rat.dependence_id = dt.id
                         LEFT JOIN risk_data_tbl rdt ON rdt.id = rat.risk_id
                         WHERE ${matrixFilter} GROUP BY dt.id, dt.name
-                    `)),
-                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
-                        SELECT dt.name as dependence_name, MAX(a.\`level\`) as alert_level,
-                        CASE MAX(a.\`level\`) WHEN 1 THEN 'Crítico' WHEN 2 THEN 'Alto' WHEN 3 THEN 'Medio' WHEN 4 THEN 'Sin Riesgo' ELSE 'No definido' END as alert_description,
+                    `, depIdParam),
+                    fetchSql(userKey, `
+                        SELECT dt.name as dependence_name, MAX(a.level) as alert_level,
+                        CASE MAX(a.level) WHEN 1 THEN 'Crítico' WHEN 2 THEN 'Alto' WHEN 3 THEN 'Medio' WHEN 4 THEN 'Sin Riesgo' ELSE 'No definido' END as alert_description,
                         CEILING(AVG(rdt.impact)) as avg_impact, CEILING(AVG(rdt.probability)) as avg_probability,
                         COUNT(DISTINCT rdt.id) as risk_count, AVG(rdt.impact * rdt.probability) as risk_score
                         FROM risk_action_tbl rat INNER JOIN risk_data_tbl rdt ON rat.risk_id = rdt.id
                         LEFT JOIN client_tbl ct ON ct.dependence_id = rat.dependence_id LEFT JOIN alert_tbl a ON a.client_id = ct.id LEFT JOIN dependence_tbl dt ON dt.id = rat.dependence_id
                         WHERE rat.dependence_id IS NOT NULL AND ${auth.isSuper && !matrixDepId ? '1=1' : (targetDepId ? (targetDepId.split(',').length > 1 ? `rat.dependence_id IN (${targetDepId.split(',').map(id => `'${id}'`).join(',')})` : `rat.dependence_id = '${targetDepId}'`) : '1=0')}
                         GROUP BY dt.name, rat.dependence_id ORDER BY risk_score DESC
-                    `)),
-                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
+                    `, depIdParam),
+                    fetchSql(userKey, `
                         SELECT rdt.name as "Riesgo", rdt.description as "Descripcion", rdt.status as "Estado", rat.description as "Accion"
                         FROM risk_data_tbl rdt inner join risk_action_tbl rat on rat.risk_id = rdt.id
                         WHERE ${auth.isSuper ? '1=1' : (auth.dependenceId ? (auth.dependenceId.split(',').length > 1 ? `rat.dependence_id IN (${auth.dependenceId.split(',').map(id => `'${id}'`).join(',')})` : `rat.dependence_id = '${auth.dependenceId}'`) : '1=0')}
-                    `)),
-                    fetch(`/api/sql?x-user-key=${userKey}&query=` + encodeURIComponent(`
+                    `),
+                    fetchSql(userKey, `
                         SELECT u.email as "Correo", u.name as "Nombre", u.area as "Area",
                         (SELECT COUNT(*) FROM training_progress_tbl tp WHERE tp.userId = u.id) as "Completados",
                         (SELECT COUNT(*) FROM training_tbl t WHERE t.status = 1) as "Total",
                         COALESCE((SELECT AVG(tp.score) FROM training_progress_tbl tp WHERE tp.userId = u.id), 0) as "Puntaje Promedio"
                         FROM users_app_tbl u
-                        WHERE 
-                        ${(auth.role === 'SUPER' || (auth.role === 'TRAINER' && canSeeAll)) ? 'u.role = "STUDENT"' : 
-                          (auth.role === 'ADMIN' || auth.role === 'TRAINER') ? (auth.dependenceId ? (auth.dependenceId.split(',').length > 1 ? `u.dependence_id IN (${auth.dependenceId.split(',').map(id => `'${id}'`).join(',')}) AND u.role = "STUDENT"` : `u.dependence_id = '${auth.dependenceId}' AND u.role = "STUDENT"`) : '1=0') :
+                        WHERE
+                        ${(auth.role === 'SUPER' || (auth.role === 'TRAINER' && canSeeAll)) ? `u.role = 'STUDENT'` :
+                          (auth.role === 'ADMIN' || auth.role === 'TRAINER') ? (auth.dependenceId ? (auth.dependenceId.split(',').length > 1 ? `u.dependence_id IN (${auth.dependenceId.split(',').map(id => `'${id}'`).join(',')}) AND u.role = 'STUDENT'` : `u.dependence_id = '${auth.dependenceId}' AND u.role = 'STUDENT'`) : '1=0') :
                           `u.id = '${auth.userId}'`}
-                    `))
+                    `)
                 ]);
 
                 const [kpiD, bar1D, bar2D, lineD, pieD, matrixD, tableD, detailsD, trainingD] = await Promise.all([

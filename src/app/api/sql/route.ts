@@ -39,7 +39,8 @@ export async function GET(request: NextRequest) {
     //   );
     // }
 
-    const results = await query(sqlQuery, []);
+    const dependenceId = searchParams.get("dependence_id") || undefined;
+    const results = await query(sqlQuery, [], dependenceId);
 
     return NextResponse.json(results);
   } catch (error) {
@@ -64,7 +65,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { sql, params = [] } = body;
+    const { sql, params = [], dependence_id: dependenceId } = body;
 
     if (typeof sql !== "string" || !sql.trim()) {
       return NextResponse.json(
@@ -82,7 +83,11 @@ export async function POST(request: NextRequest) {
     //   );
     // }
 
-    const results = await query(sql, Array.isArray(params) ? params : []);
+    const results = await query(
+      sql,
+      Array.isArray(params) ? params : [],
+      typeof dependenceId === "string" ? dependenceId : undefined,
+    );
 
     return NextResponse.json({
       success: true,
