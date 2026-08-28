@@ -230,8 +230,8 @@ export default function ReporteriaSegmentadaClient() {
                         WHERE ${matrixFilter} GROUP BY dt.id, dt.name
                     `, depIdParam),
                     fetchSql(userKey, `
-                        SELECT dt.name as dependence_name, MAX(a.level) as alert_level,
-                        CASE MAX(a.level) WHEN 1 THEN 'Crítico' WHEN 2 THEN 'Alto' WHEN 3 THEN 'Medio' WHEN 4 THEN 'Sin Riesgo' ELSE 'No definido' END as alert_description,
+                        SELECT dt.name as dependence_name, COALESCE(MIN(CASE WHEN a.level IN ('1', 'CRITICAL', 'CRÍTICO') THEN 1 WHEN a.level IN ('2', 'HIGH', 'ALTO') THEN 2 WHEN a.level IN ('3', 'MEDIUM', 'MEDIO') THEN 3 ELSE 4 END), 4) as alert_level,
+                        CASE COALESCE(MIN(CASE WHEN a.level IN ('1', 'CRITICAL', 'CRÍTICO') THEN 1 WHEN a.level IN ('2', 'HIGH', 'ALTO') THEN 2 WHEN a.level IN ('3', 'MEDIUM', 'MEDIO') THEN 3 ELSE 4 END), 4) WHEN 1 THEN 'Crítico' WHEN 2 THEN 'Alto' WHEN 3 THEN 'Medio' WHEN 4 THEN 'Sin Riesgo' ELSE 'No definido' END as alert_description,
                         CEILING(AVG(rdt.impact)) as avg_impact, CEILING(AVG(rdt.probability)) as avg_probability,
                         COUNT(DISTINCT rdt.id) as risk_count, AVG(rdt.impact * rdt.probability) as risk_score
                         FROM risk_action_tbl rat INNER JOIN risk_data_tbl rdt ON rat.risk_id = rdt.id
@@ -246,9 +246,9 @@ export default function ReporteriaSegmentadaClient() {
                     `),
                     fetchSql(userKey, `
                         SELECT u.email as "Correo", u.name as "Nombre", u.area as "Area",
-                        (SELECT COUNT(*) FROM training_progress_tbl tp WHERE tp.userId = u.id) as "Completados",
-                        (SELECT COUNT(*) FROM training_tbl t WHERE t.status = 1) as "Total",
-                        COALESCE((SELECT AVG(tp.score) FROM training_progress_tbl tp WHERE tp.userId = u.id), 0) as "Puntaje Promedio"
+                        (SELECT COUNT(*) FROM training_progress_tbl tp WHERE tp."userId" = u.id) as "Completados",
+                        (SELECT COUNT(*) FROM training_tbl t WHERE (t.status = true OR t.status::text = '1')) as "Total",
+                        COALESCE((SELECT AVG(tp.score) FROM training_progress_tbl tp WHERE tp."userId" = u.id), 0) as "Puntaje Promedio"
                         FROM users_app_tbl u
                         WHERE
                         ${(auth.role === 'SUPER' || (auth.role === 'TRAINER' && canSeeAll)) ? `u.role = 'STUDENT'` :

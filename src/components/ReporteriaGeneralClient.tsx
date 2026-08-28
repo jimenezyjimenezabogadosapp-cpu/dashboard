@@ -353,7 +353,7 @@ export default function ReporteriaGeneralClient() {
                     `;
                     bar1Query = `SELECT 'Dilisense' as label, 45 as value UNION ALL SELECT 'Paco' as label, 30 as value UNION ALL SELECT 'Cruce Judicial' as label, 25 as value`;
                     bar2Query = `SELECT 'Módulo Auth' as label, 120 as value UNION ALL SELECT 'Módulo PDF' as label, 450 as value UNION ALL SELECT 'Módulo Buscador' as label, 280 as value`; // Latencia
-                    lineQuery = `SELECT TO_CHAR(created, 'HH24:00') as label, ROUND(COUNT(*), 0) as value FROM client_tbl WHERE created >= CURRENT_DATE GROUP BY label ORDER BY label ASC`;
+                    lineQuery = `SELECT TO_CHAR(created, 'HH24:00') as label, ROUND(COUNT(*), 0) as value FROM client_tbl WHERE created >= CURRENT_DATE GROUP BY 1 ORDER BY 1 ASC`;
                     pieQuery = `SELECT 'Exitosas' as label, 98 as value UNION ALL SELECT 'Fallidas' as label, 2 as value`;
                 } else if (viewRole === "SUPER" || viewRole === "ADMIN") {
                     // PERSPECTIVA SUPER (GENERAL) O ADMIN (DEPENDENCIA)
@@ -365,7 +365,7 @@ export default function ReporteriaGeneralClient() {
                                 ROUND((SELECT COUNT(*) FROM client_tbl WHERE users_id = '${targetUserId}'), 0) as casos_procesados,
                                 ROUND((SELECT COUNT(*) FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id WHERE c.users_id = '${targetUserId}' AND a.level = '1'), 0) as alertas_criticas_mias,
                                 ROUND((SELECT COUNT(*) FROM client_tbl WHERE users_id = '${targetUserId}' AND created >= CURRENT_DATE), 0) as productividad_hoy,
-                                ROUND(COALESCE((SELECT COUNT(*) FROM training_progress_tbl WHERE userId = '${targetUserId}') * 100 / NULLIF((SELECT COUNT(*) FROM training_tbl WHERE status = 1), 0), 0), 0) as progreso_entrenamiento
+                                ROUND(COALESCE((SELECT COUNT(*) FROM training_progress_tbl WHERE "userId" = '${targetUserId}') * 100 / NULLIF((SELECT COUNT(*) FROM training_tbl WHERE (status = true OR status::text = '1')), 0), 0), 0) as progreso_entrenamiento
                         `;
                     } else {
                         kpiQuery = `
@@ -378,12 +378,12 @@ export default function ReporteriaGeneralClient() {
                     }
                     bar1Query = `
                         SELECT 
-                            COALESCE(SPLIT_PART(u.email, '@', 1), c.users_id, 'Anónimo') as label,
+                            COALESCE(SPLIT_PART(u.email, '@', 1), c.users_id::text, 'Anónimo') as label,
                             ROUND(${countExpr}, 0) as value 
                         FROM client_tbl c 
                         LEFT JOIN users_app_tbl u ON c.users_id = u.id 
                         WHERE ${whereClauseC} AND c.users_id IS NOT NULL
-                        GROUP BY label 
+                        GROUP BY 1 
                         ORDER BY value DESC 
                         LIMIT 10
                     `;
@@ -436,12 +436,12 @@ export default function ReporteriaGeneralClient() {
                     lineQuery = `
                         SELECT 
                             ${timeExpr} as time_label, 
-                            COALESCE(u.email, c.users_id, 'Anonimo') as email, 
+                            COALESCE(u.email, c.users_id::text, 'Anonimo') as email, 
                             ${countExpr} as value 
                         FROM client_tbl c 
                         LEFT JOIN users_app_tbl u ON c.users_id = u.id
                         WHERE ${whereClauseC} 
-                        GROUP BY ${timeExpr}, COALESCE(u.email, c.users_id, 'Anonimo')
+                        GROUP BY ${timeExpr}, COALESCE(u.email, c.users_id::text, 'Anonimo')
                         ORDER BY time_label ASC
                     `;
                     pieQuery = `
@@ -454,7 +454,7 @@ export default function ReporteriaGeneralClient() {
                             ROUND(COUNT(*), 0) as value 
                         FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id 
                         WHERE ${whereClauseC}
-                        GROUP BY label 
+                        GROUP BY 1 
                         ORDER BY CASE label WHEN 'Bajo' THEN 1 WHEN 'Medio' THEN 2 WHEN 'Alto' THEN 3 END ASC
                     `;
                 } else {
@@ -466,7 +466,7 @@ export default function ReporteriaGeneralClient() {
                             ROUND((SELECT COUNT(*) FROM client_tbl c WHERE ${whereClauseC}), 0) as casos_procesados,
                             ROUND((SELECT COUNT(*) FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id WHERE a.level = '1' AND ${whereClauseC}), 0) as alertas_criticas_mias,
                             ROUND((SELECT COUNT(*) FROM client_tbl c WHERE ${whereClauseC} AND c.created >= CURRENT_DATE), 0) as productividad_hoy,
-                            ROUND(COALESCE((SELECT COUNT(*) FROM training_progress_tbl WHERE userId = '${uId}') * 100 / NULLIF((SELECT COUNT(*) FROM training_tbl WHERE status = 1), 0), 0), 0) as progreso_entrenamiento
+                            ROUND(COALESCE((SELECT COUNT(*) FROM training_progress_tbl WHERE "userId" = '${uId}') * 100 / NULLIF((SELECT COUNT(*) FROM training_tbl WHERE (status = true OR status::text = '1')), 0), 0), 0) as progreso_entrenamiento
                     `;
                     bar1Query = `
                         SELECT 'Yo' as label, (SELECT ${countExpr} FROM client_tbl c WHERE ${whereClauseC}) as value
@@ -485,7 +485,7 @@ export default function ReporteriaGeneralClient() {
                             ROUND(COUNT(*), 0) as value 
                         FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id 
                         WHERE ${whereClauseC} 
-                        GROUP BY label
+                        GROUP BY 1
                         ORDER BY CASE label WHEN 'Bajo' THEN 1 WHEN 'Medio' THEN 2 WHEN 'Alto' THEN 3 END ASC
                     `;
                 }
@@ -557,7 +557,7 @@ export default function ReporteriaGeneralClient() {
                     FROM alert_tbl a 
                     INNER JOIN client_tbl c ON a.client_id = c.id
                     ${alertDepFilter} ${dimFilter}
-                    GROUP BY label, alert_level
+                    GROUP BY 1, 2
                     ORDER BY value DESC
                     LIMIT 60
                 `;
@@ -599,8 +599,8 @@ export default function ReporteriaGeneralClient() {
                     fetchSql(userKey, pieQuery, depIdParam),
                     fetchSql(userKey, matrixQuery, matrixDepIdParam),
                     fetchSql(userKey, `
-                        SELECT dt.name as dependence_name, COALESCE(MAX(a.level), 4) as alert_level,
-                        CASE COALESCE(MAX(a.level), 4) WHEN 1 THEN 'Crítico' WHEN 2 THEN 'Alto' WHEN 3 THEN 'Medio' WHEN 4 THEN 'Sin Riesgo' ELSE 'Sin Riesgo' END as alert_description,
+                        SELECT dt.name as dependence_name, COALESCE(MIN(CASE WHEN a.level IN ('1', 'CRITICAL', 'CRÍTICO') THEN 1 WHEN a.level IN ('2', 'HIGH', 'ALTO') THEN 2 WHEN a.level IN ('3', 'MEDIUM', 'MEDIO') THEN 3 ELSE 4 END), 4) as alert_level,
+                        CASE COALESCE(MIN(CASE WHEN a.level IN ('1', 'CRITICAL', 'CRÍTICO') THEN 1 WHEN a.level IN ('2', 'HIGH', 'ALTO') THEN 2 WHEN a.level IN ('3', 'MEDIUM', 'MEDIO') THEN 3 ELSE 4 END), 4) WHEN 1 THEN 'Crítico' WHEN 2 THEN 'Alto' WHEN 3 THEN 'Medio' WHEN 4 THEN 'Sin Riesgo' ELSE 'Sin Riesgo' END as alert_description,
                         COALESCE(CEILING(AVG(rdt.impact)), 1) as avg_impact, COALESCE(CEILING(AVG(rdt.probability)), 1) as avg_probability,
                         COUNT(DISTINCT rdt.id) as risk_count, COALESCE(AVG(rdt.impact * rdt.probability), 0) as risk_score
                         FROM dependence_tbl dt
@@ -618,9 +618,9 @@ export default function ReporteriaGeneralClient() {
                     `),
                     fetchSql(userKey, `
                         SELECT u.email as "Correo", u.name as "Nombre", u.area as "Area",
-                        (SELECT COUNT(*) FROM training_progress_tbl tp WHERE tp.userId = u.id) as "Completados",
-                        (SELECT COUNT(*) FROM training_tbl t WHERE t.status = 1) as "Total",
-                        COALESCE((SELECT AVG(tp.score) FROM training_progress_tbl tp WHERE tp.userId = u.id), 0) as "Puntaje Promedio"
+                        (SELECT COUNT(*) FROM training_progress_tbl tp WHERE tp."userId" = u.id) as "Completados",
+                        (SELECT COUNT(*) FROM training_tbl t WHERE (t.status = true OR t.status::text = '1')) as "Total",
+                        COALESCE((SELECT AVG(tp.score) FROM training_progress_tbl tp WHERE tp."userId" = u.id), 0) as "Puntaje Promedio"
                         FROM users_app_tbl u
                         WHERE
                         ${(viewRole === 'SUPER' || (viewRole === 'TRAINER' && searchParams.get("can_see_all") === "true")) ? `u.role = 'STUDENT'` :
@@ -821,8 +821,8 @@ export default function ReporteriaGeneralClient() {
             const dimExpr = config.expr;
             const dimFilter = config.filter;
             const joinClause = `LEFT JOIN paises_tbl p ON c.country_id = p.id LEFT JOIN ciudades_tbl ci ON c.city_id = ci.id`;
-            const segQuery = `SELECT ${dimExpr} as label, ROUND(${countExpr}, 0) as value FROM client_tbl c ${joinClause} ${depWhereClause} ${dimFilter} ${segDateFilter} GROUP BY label ORDER BY value DESC LIMIT 20`;
-            const alertByDimensionQuery = `SELECT ${dimExpr} as label, CASE WHEN a.level IN ('1', '2') THEN 'Alto' WHEN a.level = '3' THEN 'Medio' ELSE 'Bajo' END as alert_level, COUNT(*) as value FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id ${joinClause} ${alertDepFilter} ${dimFilter} ${segDateFilter} GROUP BY label, alert_level ORDER BY value DESC LIMIT 60`;
+            const segQuery = `SELECT ${dimExpr} as label, ROUND(${countExpr}, 0) as value FROM client_tbl c ${joinClause} ${depWhereClause} ${dimFilter} ${segDateFilter} GROUP BY 1 ORDER BY value DESC LIMIT 20`;
+            const alertByDimensionQuery = `SELECT ${dimExpr} as label, CASE WHEN a.level IN ('1', '2') THEN 'Alto' WHEN a.level = '3' THEN 'Medio' ELSE 'Bajo' END as alert_level, COUNT(*) as value FROM alert_tbl a INNER JOIN client_tbl c ON a.client_id = c.id ${joinClause} ${alertDepFilter} ${dimFilter} ${segDateFilter} GROUP BY 1, 2 ORDER BY value DESC LIMIT 60`;
 
             return [
                 fetchSql(userKey, segQuery, depIdParam).then(r => r.json()).then(d => ({ dim, type: 'seg', data: d })),
